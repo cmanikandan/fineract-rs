@@ -1,6 +1,6 @@
 # Fineract-rs Migration Case Study & Complete Telemetry Log (Waves 0–7 — 100% Complete)
 
-**Project:** `fineract-rs` (Apache Fineract Java 21 / Spring Boot 3.x $\rightarrow$ Rust 28-Crate Workspace)  
+**Project:** `fineract-rs` (Apache Fineract Java 21 / Spring Boot 3.x → Rust 28-Crate Workspace)  
 **Original Upstream Project:** [Apache Fineract](https://fineract.apache.org/) ([`apache/fineract`](https://github.com/apache/fineract))  
 **Agentic Coding Platform:** **Google Antigravity** (using `/plan`, `/goal`, `ask_question`, `invoke_subagent`, `manage_subagents`, and Artifact review gating)  
 **Models Evaluated:** **Gemini 4 Argon** (1M-Token Context Window + Long Decode) & **Gemini Pro**  
