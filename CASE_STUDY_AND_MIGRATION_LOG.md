@@ -2,18 +2,41 @@
 
 **Project:** `fineract-rs` (Apache Fineract Java 21 / Spring Boot 3.x $\rightarrow$ Rust 28-Crate Workspace)  
 **Original Upstream Project:** [Apache Fineract](https://fineract.apache.org/) ([`apache/fineract`](https://github.com/apache/fineract))  
-**License:** MIT License ([`LICENSE`](LICENSE)) with Apache Fineract upstream attribution ([`NOTICE`](NOTICE))  
-**Model Evaluated:** **Gemini 4 Argon** (1M-Token Context Window + 8-Lane Parallel Long Decode)
+**Agentic Coding Platform:** **Google Antigravity** (using `/plan`, `/goal`, `ask_question`, `invoke_subagent`, `manage_subagents`, and Artifact review gating)  
+**Models Evaluated:** **Gemini 4 Argon** (1M-Token Context Window + Long Decode) & **Gemini Pro**  
+**License:** MIT License ([`LICENSE`](LICENSE)) with Apache Fineract upstream attribution ([`NOTICE`](NOTICE))
 
 > [!IMPORTANT]
 > **Experimental Proof of Concept (PoC) Disclaimer**  
-> This repository is an experimental engineering Proof of Concept created to benchmark large-scale legacy Java-to-Rust migration using long-context subgraph packing and parallel multi-agent decoding. It is provided **"as is"** without warranty of any kind and is **not** intended for production banking use without independent security, compliance, and financial auditing.
+> This repository is an experimental engineering Proof of Concept created inside **Google Antigravity** to benchmark large-scale legacy Java-to-Rust migration using interactive `/plan` blueprinting, `/goal` autonomous execution, long-context subgraph packing, and 8-lane parallel `invoke_subagent` decoding. It is provided **"as is"** without warranty of any kind and is **not** intended for production banking use without independent security, compliance, and financial auditing.
 
 ---
 
-## 1. Upstream Legacy Repository (`apache/fineract`) Baseline Statistics
+## 1. Google Antigravity Planning & Execution Toolchain Used
 
-Before executing Wave 0, we performed a full static census of the upstream `apache/fineract` repository (`develop` branch):
+A central objective of this project was evaluating how **Google Antigravity**'s built-in planning and multi-agent tools handle a `918,086`-LOC (`7,134` Java files) enterprise repository that cannot fit in a single prompt:
+
+1. **Interactive `/plan` Workflow & Blueprint Artifact (`docs/fineract_rust_modernization_plan.md`)**:
+   - The user initiated the project with `/plan I would like to modernise this open source project to rust - https://github.com/apache/fineract`.
+   - Antigravity cloned `apache/fineract`, ran a static dependency and token census (`run_command`), and authored the 7-Wave Modernization Blueprint artifact ([`docs/fineract_rust_modernization_plan.md`](docs/fineract_rust_modernization_plan.md)) with an interactive `RequestFeedback=true` review gate.
+2. **Structured Requirement Alignment via `ask_question`**:
+   - Prior to code generation, Antigravity invoked the `ask_question` tool to lock in three architectural decisions with the user:
+     - **Execution Scope**: Full 7-Wave workspace migration (`Waves 0–7`).
+     - **Target Database Dialect**: **Dual Database Support (`PostgreSQL` + `MySQL/MariaDB`)** using a unified `277`-table DDL schema (`anchor/fineract_schema_dual.sql`) and runtime placeholder rewriting (`DialectSql::rewrite_placeholders`).
+     - **Subagent Parallelism**: **8 Parallel Subagent Decode Lanes** per wave pod.
+3. **Autonomous `/goal` Execution & Live HTML Task Telemetry (`task.md`)**:
+   - After approving [`docs/fineract_rust_modernization_plan.md`](docs/fineract_rust_modernization_plan.md), the user triggered `/goal finish all the waves please`.
+   - Antigravity maintained a real-time HTML status table in `task.md` while orchestrating Waves `0` through `7` to completion.
+4. **8-Lane Parallel Subagent Orchestration (`invoke_subagent` & `manage_subagents`)**:
+   - In Waves `1–7`, Antigravity used `invoke_subagent` to launch up to 8 concurrent subagent workers per wave.
+   - Each subagent read the shared Layer-1 (`anchor/fineract_schema_dual.sql` + `anchor/rust_constitution.md`) and Layer-2 (`anchor/upstream_rust_api.rs`) anchors alongside its assigned Java package subgraph, emitting `2,000–4,400` lines of Rust per file via `write_file`.
+   - Between waves, Antigravity ran [`tools/argon_context_packer.py`](tools/argon_context_packer.py) (`--extract-stubs`) via `run_command` to refresh `anchor/upstream_rust_api.rs` (`287,212` bytes / `6,340` lines of public Rust signatures), guaranteeing cross-wave symbol alignment.
+
+---
+
+## 2. Upstream Legacy Repository (`apache/fineract`) Baseline Statistics
+
+Before executing Wave 0, Antigravity performed a full static census of the upstream `apache/fineract` repository (`develop` branch):
 
 | Language / File Type | Extension(s) | File Count | Lines of Code / Content | Role in Upstream Apache Fineract |
 | :--- | :--- | ---: | ---: | :--- |
@@ -41,10 +64,11 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ---
 
-## 2. Wave-by-Wave Execution Ledger (Waves 0–7)
+## 3. Wave-by-Wave Execution Ledger (Waves 0–7)
 
 ### Wave 0: Context Anchor, Liquibase Schema Distillation & Avro Codegen
 - **Duration**: ~`18` minutes | **Tokens**: ~`275,000` (`210k` input / `65k` output)
+- **Antigravity Tools Used**: `/plan`, `ask_question`, `run_command`, `write_file`
 - **Deliverables**:
   - [`tools/wave0_bootstrap.py`](tools/wave0_bootstrap.py): Parsed all `481` Liquibase XML changelogs into [`anchor/fineract_schema_dual.sql`](anchor/fineract_schema_dual.sql) (`4,399` lines, `277` tables, `576` foreign keys) and generated [`crates/fineract-avro-rs/src/lib.rs`](crates/fineract-avro-rs/src/lib.rs) (`3,655` lines, `100` Avro V1 structs).
   - [`tools/argon_context_packer.py`](tools/argon_context_packer.py): Built the 3-Layer Context Anchor packer and Layer-2 public Rust stub extractor ([`anchor/upstream_rust_api.rs`](anchor/upstream_rust_api.rs)).
@@ -52,6 +76,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 1: Foundational Kernel, Fixed-Point Money, Validation, CQRS & Security (`15,102` LOC)
 - **Duration**: ~`28` minutes | **Tokens**: ~`485,000` (`340k` input / `145k` output)
+- **Antigravity Tools Used**: `/goal`, `invoke_subagent` (8 parallel lanes), `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-money` (`1,692` LOC): `Money`, `MonetaryCurrency`, `MathContext`, all 8 `RoundingMode`s, step-wise allocation.
   - `fineract-validation-rs` (`3,110` LOC): 13 Jakarta validators + `DataValidatorBuilder` + `PlatformApiDataValidationException`.
@@ -61,6 +86,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 2: Accounting, Double-Entry GL, Charges, Tax, Rates & Organisation (`24,376` LOC)
 - **Duration**: ~`36` minutes | **Tokens**: ~`725,000` (`490k` input / `235k` output)
+- **Antigravity Tools Used**: `invoke_subagent` (8 parallel lanes), `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-rates-rs` (`2,937` LOC): Currencies & Floating Rate periods.
   - `fineract-tax-rs` (`1,918` LOC): Tax components, tax groups, effective-date tax split engine.
@@ -72,6 +98,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 3: Client Portfolio, KYC, Groups/Centers, Collateral & Savings (`28,645` LOC)
 - **Duration**: ~`42` minutes | **Tokens**: ~`835,000` (`560k` input / `275k` output)
+- **Antigravity Tools Used**: `invoke_subagent` (8 parallel lanes), `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-client-portfolio-rs` (`12,480` LOC across 4 files): `client_kyc.rs` (`4,105` LOC), `group_and_center.rs` (`3,923` LOC), `account_transfer.rs` (`4,442` LOC).
   - `fineract-collateral-rs` (`3,388` LOC): Collateral quality catalog, client collateral valuations, LTV & loan pledging.
@@ -79,6 +106,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 4: Lending Engine, Progressive Loan EMI, Origination & Delinquency (`20,590` LOC)
 - **Duration**: ~`38` minutes | **Tokens**: ~`678,000` (`480k` input / `198k` output)
+- **Antigravity Tools Used**: `invoke_subagent` (8 parallel lanes), `write_file`, `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-schedule-engine` (`1,654` LOC): Pure functional schedule generator & Newton-Raphson solver.
   - `fineract-progressive-loan-rs` (`2,816` LOC): `AdvancedPaymentScheduleTransactionProcessor`, `EMIModel`, `RepaymentPeriod`, `InterestPeriod`, 12-bucket payment & credit allocation rules.
@@ -88,6 +116,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 5: Working Capital Loans, External Asset Owners (Investor), Shares & Interop (`12,318` LOC)
 - **Duration**: ~`25` minutes | **Tokens**: ~`428,000` (`310k` input / `118k` output)
+- **Antigravity Tools Used**: `invoke_subagent` (4 parallel lanes), `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-working-capital-loan-rs` (`2,284` LOC): Merchant working capital loans, daily sales sweeps, discount amortization.
   - `fineract-investor-rs` (`3,243` LOC): External asset owner transfers, sale/buyback state machine, sub-ledger accounting.
@@ -96,6 +125,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 6: Close-of-Business (COB), Operations, Transactional Outbox, Batch API, Reporting & Server (`9,097` LOC)
 - **Duration**: ~`24` minutes | **Tokens**: ~`378,000` (`290k` input / `88k` output)
+- **Antigravity Tools Used**: `invoke_subagent`, `manage_subagents`, `write_file`, `run_command` (`--extract-stubs`)
 - **Deliverables**:
   - `fineract-cob-rs` (`3,251` LOC): Partitioned Tokio COB worker pool, account lock manager, inline COB & catch-up.
   - `fineract-ops-rs` (`3,422` LOC): Business Date service (`BUSINESS_DATE` / `COB_DATE`), job scheduler, global config, hooks, notifications.
@@ -106,6 +136,7 @@ Before executing Wave 0, we performed a full static census of the upstream `apac
 
 ### Wave 7: Typed Rust Client SDK, Gherkin BDD Runner & Cross-Domain Integration Suite (`1,218` LOC)
 - **Duration**: ~`14` minutes | **Tokens**: ~`176,000` (`160k` input / `16k` output)
+- **Antigravity Tools Used**: `write_file`, `run_command` (`argon_context_packer.py --extract-stubs`)
 - **Deliverables**:
   - `fineract-client-rs` (`539` LOC): Typed Rust Client SDK (`FineractClient`) with automatic `Idempotency-Key` and `Fineract-Platform-TenantId` propagation.
   - `fineract-e2e-rs` (`405` LOC): Cucumber/Gherkin `.feature` parser and stateful `BddScenarioWorld` runner.
