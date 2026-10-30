@@ -4,7 +4,7 @@ A complete, memory-safe, zero-unsafe **Rust (Edition 2021 / 2024 compatible)** m
 
 > [!IMPORTANT]
 > **Proof of Concept (PoC) Disclaimer & Evaluative Nature**  
-> `fineract-rs` is an experimental architectural Proof of Concept (PoC) created in **Google Antigravity** to evaluate and demonstrate the long-context reasoning (1M-token context window), interactive `/plan` blueprinting, `/goal` autonomous execution, static dependency-graph context packing, and 8-lane `invoke_subagent` Long Decode code-synthesis capabilities of **Gemini 4 Argon** and **Gemini Pro** on a real-world enterprise core banking codebase.
+> `fineract-rs` is an experimental architectural Proof of Concept (PoC) created in **Google Antigravity** to evaluate and demonstrate the long-context reasoning (1M-token context window), interactive `/plan` blueprinting, `/goal` autonomous execution, static dependency-graph context packing, and 8-lane `invoke_subagent` Long Decode code-synthesis capabilities of **Gemini 4 Argon** on a real-world enterprise core banking codebase.
 >
 > **This software is experimental, is NOT production-ready, and is provided "as is" under the MIT License without warranty of any kind.**  
 > While the core financial algorithms, fixed-point `Money` arithmetic (all 8 IEEE 754 / `java.math.RoundingMode` strategies), progressive loan EMI schedules, daily/average-daily savings interest engines, Dual-DB SQL placeholder rewriters (`PostgreSQL` `$1..$N` ↔ `MySQL/MariaDB` `?`), and double-entry general ledger invariants are modeled directly on Apache Fineract's domain specifications:
@@ -24,7 +24,7 @@ A complete, memory-safe, zero-unsafe **Rust (Edition 2021 / 2024 compatible)** m
 
 ### Role of Google Antigravity & Gemini 4 Argon (1M Context + Long Decode)
 
-This migration was planned, architected, and synthesized inside **Google Antigravity** (Google DeepMind's agentic AI coding platform) powered by **Gemini 4 Argon** and **Gemini Pro**, combining frontier long-context reasoning with Antigravity's built-in planning and multi-agent tools:
+This migration was planned, architected, and synthesized inside **Google Antigravity** (Google DeepMind's agentic AI coding platform) powered by **Gemini 4 Argon**, combining frontier long-context reasoning with Antigravity's built-in planning and multi-agent tools:
 
 - **Interactive `/plan` Workflow & Blueprint Artifact Gate**: Initiated via `/plan`, Antigravity audited all `7,134` Java files, `481` Liquibase XML changelogs, and `101` Avro schemas in `apache/fineract` and authored the 7-Wave Modernization Blueprint ([`docs/fineract_rust_modernization_plan.md`](docs/fineract_rust_modernization_plan.md)) with an interactive user approval gate (`RequestFeedback=true`) before writing code.
 - **Structured Architecture Alignment via `ask_question`**: Used Antigravity's `ask_question` tool to lock in key architectural decisions upfront: (1) Full 7-Wave workspace execution, (2) **Dual-Database Support (`PostgreSQL` + `MySQL/MariaDB`)** via runtime `DialectSql`, and (3) **8 Parallel Subagent Decode Lanes** per wave pod.
@@ -136,57 +136,6 @@ flowchart TD
 ## 4. Google Cloud Production Reference Architecture
 
 ![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture.png)
-
-```
-┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                  GOOGLE CLOUD PRODUCTION REFERENCE ARCHITECTURE BLUEPRINT                              │
-│                               Apache Fineract — Rust Edition (fineract-rs)                             │
-└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-
- ┌──────────────────────────────────────────────────────────────────────────────────────────────────────┐
- │ [1] INGRESS & EDGE SECURITY ZONE (Global Anycast Edge)                                               │
- │                                                                                                      │
- │   Mobile Banking App / Fintech Portal / Core Banking Agents / Mojaloop DFSP Switch                   │
- │                                             │ (HTTPS / TLS 1.3 / HTTP/2)                             │
- │                                             ▼                                                        │
- │   ┌──────────────────────────────────────────────────────────────────────────────────────────────┐   │
- │   │ Google Cloud Load Balancing (External Global HTTPS Load Balancer)                            │   │
- │   │   ├── Google Cloud Armor (WAF: OWASP Top 10, Geo-fencing, Layer-7 Rate Limiting)             │   │
- │   │   └── Apigee X API Gateway / Identity-Aware Proxy (OAuth2 / OIDC & Tenant Header Guard)      │   │
- │   └──────────────────────────────────────────────────────────────────────────────────────────────┘   │
- └───────────────────────────────────────────────────┬──────────────────────────────────────────────────┘
-                                                     │ (Private Internal Google Network Routing)
- ┌───────────────────────────────────────────────────▼──────────────────────────────────────────────────┐
- │ [2] HIGH-PERFORMANCE SERVERLESS COMPUTE LAYER (Cloud Run — Regional Direct VPC Egress)               │
- │                                                                                                      │
- │   ┌──────────────────────────────────────────────────────────────────────────────────────────────┐   │
- │   │ Google Cloud Run: [ fineract-server-rs ] (ReadWrite & ReadOnly API Pods)                     │   │
- │   │   ├── Distroless OCI Image: gcr.io/distroless/cc-debian12:nonroot (~25 MB compressed)        │   │
- │   │   ├── Runtime Characteristics: Cold Start < 5 ms | RSS Memory: ~15 MB | Tokio Async Pool     │   │
- │   │   ├── Endpoints: /fineract-provider/api/v1/* | /actuator/health | /v3/api-docs               │   │
- │   │   └── Zero-Copy 128-Bit Fixed-Point Financial Engine (fineract-money + progressive-loan-rs)  │   │
- │   └──────────────────────────────────────────────────────────────────────────────────────────────┘   │
- │                                                   ▲                                                  │
- │   ┌───────────────────────────────────────────────┴──────────────────────────────────────────────┐   │
- │   │ Google Cloud Run Jobs: [ fineract-cob-rs ] (Nightly Close-of-Business Partitioned Workers)   │   │
- │   │   ├── Triggered daily at 00:05 UTC by Google Cloud Scheduler via OIDC Service Account        │   │
- │   │   └── Partitioned Tokio Worker Pool + m_loan_account_locks + Transactional Outbox Relay      │   │
- │   └──────────────────────────────────────────────────────────────────────────────────────────────┘   │
- └───────────────────────────────────────────────────┬──────────────────────────────────────────────────┘
-                                                     │ (Direct VPC Egress / Private Service Connect)
- ┌───────────────────────────────────────────────────▼──────────────────────────────────────────────────┐
- │ [3] ISOLATED PERSISTENCE & MESSAGING ZONE (Private Service Connect / CMEK KMS Encrypted)             │
- │                                                                                                      │
- │   ┌───────────────────────────┐  ┌───────────────────────────┐  ┌────────────────────────────────┐   │
- │   │ Cloud SQL / AlloyDB       │  │ Google Cloud Pub/Sub      │  │ Google Cloud Storage (GCS)     │   │
- │   │ (PostgreSQL 16 or MySQL)  │  │ (Avro V1 Event Bus)       │  │ (Document & KYC Vault)         │   │
- │   │                           │  │                           │  │                                │   │
- │   │ • 277-Table Core Schema   │  │ • 100 Avro V1 Schemas     │  │ • Client KYC & Loan Documents  │   │
- │   │ • Double-Entry GL Journal │  │ • MessageV1 Envelope      │  │ • SHA-256 Content Addressed    │   │
- │   │ • Dual-DB DialectSql      │  │ • m_external_event Outbox │  │ • CMEK KMS Encrypted           │   │
- │   └───────────────────────────┘  └───────────────────────────┘  └────────────────────────────────┘   │
- └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
 
 ---
 
