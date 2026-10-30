@@ -146,5 +146,5 @@ Before executing Wave 0, Antigravity performed a full static census of the upstr
 
 ## 4. Google Cloud Production Reference Architecture (Generated via Official GCP Icons & Nano Banana)
 
-![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture.png)
+![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture-v2.png)
 

@@ -135,7 +135,7 @@ flowchart TD
 
 ## 4. Google Cloud Production Reference Architecture
 
-![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture.png)
+![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture-v2.png)
 
 ---
 
