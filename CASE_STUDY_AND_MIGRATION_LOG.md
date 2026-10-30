@@ -141,3 +141,10 @@ Before executing Wave 0, Antigravity performed a full static census of the upstr
   - `fineract-client-rs` (`539` LOC): Typed Rust Client SDK (`FineractClient`) with automatic `Idempotency-Key` and `Fineract-Platform-TenantId` propagation.
   - `fineract-e2e-rs` (`405` LOC): Cucumber/Gherkin `.feature` parser and stateful `BddScenarioWorld` runner.
   - `fineract-integration-tests-rs` (`274` LOC): End-to-end cross-domain integration verification harness.
+
+---
+
+## 4. Google Cloud Production Reference Architecture (Generated via Official GCP Icons & Nano Banana)
+
+![Google Cloud Production Reference Architecture](docs/architecture/fineract-rs-gcp-architecture.png)
+
