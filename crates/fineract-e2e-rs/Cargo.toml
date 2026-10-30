@@ -1,0 +1,28 @@
+[package]
+name = "fineract-e2e-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "BDD / Cucumber End-to-End Test Runner & Step Definitions ported from fineract-e2e-tests-core"
+
+[dependencies]
+fineract-server-rs = { workspace = true }
+fineract-client-rs = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

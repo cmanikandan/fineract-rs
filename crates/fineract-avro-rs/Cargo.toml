@@ -1,0 +1,12 @@
+[package]
+name = "fineract-avro-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Auto-generated Apache Fineract Avro v1 External Event schemas and Serde types (101 schemas)"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+apache-avro = { workspace = true }

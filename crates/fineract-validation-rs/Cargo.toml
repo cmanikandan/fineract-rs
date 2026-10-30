@@ -1,0 +1,15 @@
+[package]
+name = "fineract-validation-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Wire-compatible Fineract DataValidatorBuilder, ApiParameterError, and globalisation error codes"
+
+[dependencies]
+fineract-money = { workspace = true }
+rust_decimal = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+regex = { workspace = true }
+thiserror = { workspace = true }

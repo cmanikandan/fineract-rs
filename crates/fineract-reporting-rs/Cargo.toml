@@ -1,0 +1,30 @@
+[package]
+name = "fineract-reporting-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Read Reporting Engine, Stretchy Reports, Dynamic DataTables (`x_registered_table`), and AdHoc Queries"
+
+[dependencies]
+fineract-core-rs = { workspace = true }
+fineract-money = { workspace = true }
+fineract-validation-rs = { workspace = true }
+fineract-security-rs = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

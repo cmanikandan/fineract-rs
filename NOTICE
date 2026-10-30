@@ -1,0 +1,12 @@
+Apache Fineract — Rust Edition (`fineract-rs`)
+Copyright 2026 Manikandan Chandrasekaran
+
+This project is an experimental Rust translation and architectural re-engineering
+derived from Apache Fineract (https://fineract.apache.org/ | https://github.com/apache/fineract),
+originally developed at The Apache Software Foundation (ASF) and licensed under
+the Apache License, Version 2.0.
+
+Original Upstream Notice:
+  Apache Fineract
+  Copyright 2015-2026 The Apache Software Foundation
+  This product includes software developed at The Apache Software Foundation (http://www.apache.org/).

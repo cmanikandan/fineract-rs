@@ -1,0 +1,34 @@
+[package]
+name = "fineract-savings-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Savings Accounts, Fixed & Recurring Deposits, Interest Rate Charts, Daily Compounding, Holds & Overdrafts"
+
+[dependencies]
+fineract-core-rs = { workspace = true }
+fineract-money = { workspace = true }
+fineract-validation-rs = { workspace = true }
+fineract-tax-rs = { workspace = true }
+fineract-charge-rs = { workspace = true }
+fineract-accounting-rs = { workspace = true }
+fineract-client-portfolio-rs = { workspace = true }
+fineract-command-rs = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

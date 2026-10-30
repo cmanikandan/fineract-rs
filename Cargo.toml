@@ -1,0 +1,126 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fineract-avro-rs",
+    "crates/fineract-money",
+    "crates/fineract-validation-rs",
+    "crates/fineract-core-rs",
+    "crates/fineract-command-rs",
+    "crates/fineract-security-rs",
+    "crates/fineract-rates-rs",
+    "crates/fineract-tax-rs",
+    "crates/fineract-charge-rs",
+    "crates/fineract-branch-rs",
+    "crates/fineract-document-rs",
+    "crates/fineract-organisation-rs",
+    "crates/fineract-accounting-rs",
+    "crates/fineract-client-portfolio-rs",
+    "crates/fineract-collateral-rs",
+    "crates/fineract-savings-rs",
+    "crates/fineract-schedule-engine",
+    "crates/fineract-progressive-loan-rs",
+    "crates/fineract-loan-origination-rs",
+    "crates/fineract-loan-rs",
+    "crates/fineract-loan-provider-rs",
+    "crates/fineract-working-capital-loan-rs",
+    "crates/fineract-investor-rs",
+    "crates/fineract-shares-rs",
+    "crates/fineract-interop-rs",
+    "crates/fineract-outbox-rs",
+    "crates/fineract-cob-rs",
+    "crates/fineract-batch-api-rs",
+    "crates/fineract-reporting-rs",
+    "crates/fineract-ops-rs",
+    "crates/fineract-server-rs",
+    "crates/fineract-client-rs",
+    "crates/fineract-e2e-rs",
+    "crates/fineract-integration-tests-rs",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/apache/fineract"
+
+[workspace.dependencies]
+fineract-avro-rs = { path = "crates/fineract-avro-rs" }
+fineract-money = { path = "crates/fineract-money" }
+fineract-validation-rs = { path = "crates/fineract-validation-rs" }
+fineract-core-rs = { path = "crates/fineract-core-rs" }
+fineract-command-rs = { path = "crates/fineract-command-rs" }
+fineract-security-rs = { path = "crates/fineract-security-rs" }
+fineract-rates-rs = { path = "crates/fineract-rates-rs" }
+fineract-tax-rs = { path = "crates/fineract-tax-rs" }
+fineract-charge-rs = { path = "crates/fineract-charge-rs" }
+fineract-branch-rs = { path = "crates/fineract-branch-rs" }
+fineract-document-rs = { path = "crates/fineract-document-rs" }
+fineract-organisation-rs = { path = "crates/fineract-organisation-rs" }
+fineract-accounting-rs = { path = "crates/fineract-accounting-rs" }
+fineract-client-portfolio-rs = { path = "crates/fineract-client-portfolio-rs" }
+fineract-collateral-rs = { path = "crates/fineract-collateral-rs" }
+fineract-savings-rs = { path = "crates/fineract-savings-rs" }
+fineract-schedule-engine = { path = "crates/fineract-schedule-engine" }
+fineract-progressive-loan-rs = { path = "crates/fineract-progressive-loan-rs" }
+fineract-loan-origination-rs = { path = "crates/fineract-loan-origination-rs" }
+fineract-loan-rs = { path = "crates/fineract-loan-rs" }
+fineract-loan-provider-rs = { path = "crates/fineract-loan-provider-rs" }
+fineract-working-capital-loan-rs = { path = "crates/fineract-working-capital-loan-rs" }
+fineract-investor-rs = { path = "crates/fineract-investor-rs" }
+fineract-shares-rs = { path = "crates/fineract-shares-rs" }
+fineract-interop-rs = { path = "crates/fineract-interop-rs" }
+fineract-outbox-rs = { path = "crates/fineract-outbox-rs" }
+fineract-cob-rs = { path = "crates/fineract-cob-rs" }
+fineract-batch-api-rs = { path = "crates/fineract-batch-api-rs" }
+fineract-reporting-rs = { path = "crates/fineract-reporting-rs" }
+fineract-ops-rs = { path = "crates/fineract-ops-rs" }
+fineract-server-rs = { path = "crates/fineract-server-rs" }
+fineract-client-rs = { path = "crates/fineract-client-rs" }
+fineract-e2e-rs = { path = "crates/fineract-e2e-rs" }
+fineract-integration-tests-rs = { path = "crates/fineract-integration-tests-rs" }
+
+# Async & Web Runtime
+tokio = { version = "1.40", features = ["full"] }
+axum = { version = "0.7", features = ["macros", "json"] }
+tower = { version = "0.5", features = ["util", "timeout", "limit"] }
+tower-http = { version = "0.6", features = ["trace", "cors", "auth"] }
+async-trait = "0.1"
+futures = "0.3"
+
+# Serialization & Avro
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+apache-avro = { version = "0.17", features = ["snappy"] }
+
+# Financial Math, Dates, UUIDs, Regex
+rust_decimal = { version = "1.36", features = ["serde", "serde-with-str", "maths"] }
+rust_decimal_macros = "1.36"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.10", features = ["v4", "v7", "serde"] }
+regex = "1.11"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+
+# Dual-Database Persistence (PostgreSQL + MySQL/MariaDB via sqlx::Any)
+sqlx = { version = "0.8", features = [
+    "runtime-tokio",
+    "tls-rustls",
+    "any",
+    "postgres",
+    "mysql",
+    "chrono",
+    "rust_decimal",
+    "uuid",
+    "json",
+] }
+
+# Security & Crypto
+jsonwebtoken = "9.3"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+dashmap = "6.1"
+
+# Testing
+proptest = "1.5"

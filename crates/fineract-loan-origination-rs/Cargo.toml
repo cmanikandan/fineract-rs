@@ -1,0 +1,31 @@
+[package]
+name = "fineract-loan-origination-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Loan Origination, Credit Scoring, Co-Applicants, and Underwriting Workflow"
+
+[dependencies]
+fineract-core-rs = { workspace = true }
+fineract-money = { workspace = true }
+fineract-validation-rs = { workspace = true }
+fineract-client-portfolio-rs = { workspace = true }
+fineract-command-rs = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

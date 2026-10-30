@@ -1,0 +1,56 @@
+[package]
+name = "fineract-server-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Unified Axum HTTP Server & OpenAPI 3.1 Gateway assembling all Fineract-RS domain routes"
+
+[dependencies]
+fineract-avro-rs = { workspace = true }
+fineract-money = { workspace = true }
+fineract-validation-rs = { workspace = true }
+fineract-core-rs = { workspace = true }
+fineract-command-rs = { workspace = true }
+fineract-security-rs = { workspace = true }
+fineract-rates-rs = { workspace = true }
+fineract-tax-rs = { workspace = true }
+fineract-charge-rs = { workspace = true }
+fineract-branch-rs = { workspace = true }
+fineract-document-rs = { workspace = true }
+fineract-organisation-rs = { workspace = true }
+fineract-accounting-rs = { workspace = true }
+fineract-client-portfolio-rs = { workspace = true }
+fineract-collateral-rs = { workspace = true }
+fineract-savings-rs = { workspace = true }
+fineract-schedule-engine = { workspace = true }
+fineract-progressive-loan-rs = { workspace = true }
+fineract-loan-origination-rs = { workspace = true }
+fineract-loan-rs = { workspace = true }
+fineract-loan-provider-rs = { workspace = true }
+fineract-working-capital-loan-rs = { workspace = true }
+fineract-investor-rs = { workspace = true }
+fineract-shares-rs = { workspace = true }
+fineract-interop-rs = { workspace = true }
+fineract-outbox-rs = { workspace = true }
+fineract-cob-rs = { workspace = true }
+fineract-batch-api-rs = { workspace = true }
+fineract-reporting-rs = { workspace = true }
+fineract-ops-rs = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rust_decimal = { workspace = true }
+rust_decimal_macros = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+dashmap = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
