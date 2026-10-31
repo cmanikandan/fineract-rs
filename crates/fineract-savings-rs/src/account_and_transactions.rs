@@ -8,9 +8,9 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use chrono::{Datelike, NaiveDate};
-use fineract_charge_rs::{ChargeCalculationType, ChargeDefinition, ChargeTimeType};
+use fineract_charge_rs::{Charge, ChargeCalculationType, ChargeTimeType};
 use fineract_core_rs::EnumOptionData;
-use fineract_money::{MonetaryCurrency, Money};
+use fineract_money::{FineractRoundingMode, MonetaryCurrency, Money};
 use fineract_validation_rs::PlatformDomainRuleException;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -571,9 +571,57 @@ pub struct SavingsAccountCharge {
 }
 
 impl SavingsAccountCharge {
-    /// Creates a new `SavingsAccountCharge` from a `ChargeDefinition`.
+    pub fn new(
+        id: Option<i64>,
+        savings_account_id: Option<i64>,
+        charge_id: i64,
+        name: impl Into<String>,
+        currency: MonetaryCurrency,
+        charge_time_type: ChargeTimeType,
+        charge_calculation_type: ChargeCalculationType,
+        amount: Decimal,
+        is_penalty: bool,
+        charge_due_date: Option<NaiveDate>,
+    ) -> Self {
+        let (fee_amount, percentage, amount_percentage_applied_to) =
+            if charge_calculation_type.is_percentage_of_amount() {
+                (Decimal::ZERO, Some(amount), Some(Decimal::ZERO))
+            } else {
+                let rounded = Money::of(&currency, amount, FineractRoundingMode::HalfEven).amount();
+                (rounded, None, None)
+            };
+
+        Self {
+            id,
+            savings_account_id,
+            charge_id,
+            name: name.into(),
+            charge_time_type,
+            charge_due_date,
+            fee_on_month: None,
+            fee_on_day: None,
+            fee_interval: None,
+            charge_calculation_type,
+            percentage,
+            amount_percentage_applied_to,
+            currency,
+            amount: fee_amount,
+            amount_paid: Decimal::ZERO,
+            amount_waived: Decimal::ZERO,
+            amount_written_off: Decimal::ZERO,
+            amount_outstanding: fee_amount,
+            is_penalty,
+            is_paid_derived: false,
+            waived: false,
+            status: true,
+            inactivation_date: None,
+            free_withdrawal_count: 0,
+        }
+    }
+
+    /// Creates a new `SavingsAccountCharge` from a `Charge`.
     pub fn from_charge_definition(
-        charge_def: &ChargeDefinition,
+        charge_def: &Charge,
         currency: MonetaryCurrency,
         amount_override: Option<Decimal>,
         due_date: Option<NaiveDate>,
@@ -587,19 +635,19 @@ impl SavingsAccountCharge {
                     Some(Decimal::ZERO),
                 )
             } else {
-                let rounded = Money::of(currency, raw_amount).amount();
+                let rounded = Money::of(&currency, raw_amount, FineractRoundingMode::HalfEven).amount();
                 (rounded, None, None)
             };
 
         Self {
             id: None,
             savings_account_id: None,
-            charge_id: charge_def.id.unwrap_or(0),
+            charge_id: charge_def.id,
             name: charge_def.name.clone(),
             charge_time_type: charge_def.charge_time_type,
             charge_due_date: due_date,
-            fee_on_month: charge_def.fee_on_month,
-            fee_on_day: charge_def.fee_on_day,
+            fee_on_month: charge_def.fee_on_month.map(u32::from),
+            fee_on_day: charge_def.fee_on_day.map(u32::from),
             fee_interval: charge_def.fee_interval,
             charge_calculation_type: charge_def.charge_calculation_type,
             percentage,
@@ -610,13 +658,13 @@ impl SavingsAccountCharge {
             amount_waived: Decimal::ZERO,
             amount_written_off: Decimal::ZERO,
             amount_outstanding: amount,
-            is_penalty: charge_def.penalty,
+            is_penalty: charge_def.is_penalty,
             is_paid_derived: amount.is_zero()
                 && !charge_def.charge_calculation_type.is_percentage_of_amount(),
             waived: false,
             status: true,
             inactivation_date: None,
-            free_withdrawal_count: charge_def.free_withdrawal_charge_frequency.unwrap_or(0),
+            free_withdrawal_count: 0,
         }
     }
 
@@ -633,7 +681,7 @@ impl SavingsAccountCharge {
         let (amount, percentage) = if calculation_type.is_percentage_of_amount() {
             (Decimal::ZERO, Some(amount_or_rate))
         } else {
-            let rounded = Money::of(currency, amount_or_rate).amount();
+            let rounded = Money::of(&currency, amount_or_rate, FineractRoundingMode::HalfEven).amount();
             (rounded, None)
         };
         Self {
@@ -723,16 +771,16 @@ impl SavingsAccountCharge {
     /// Calculates the fee amount for a given transaction amount (e.g. withdrawal amount).
     pub fn calculate_fee_for_transaction_amount(&self, transaction_amount: Decimal) -> Money {
         match self.charge_calculation_type {
-            ChargeCalculationType::Flat => Money::of(self.currency, self.amount),
+            ChargeCalculationType::Flat => Money::of(self.currency.clone(), self.amount, FineractRoundingMode::HalfEven),
             ChargeCalculationType::PercentOfAmount
             | ChargeCalculationType::PercentOfAmountAndInterest
             | ChargeCalculationType::PercentOfInterest
             | ChargeCalculationType::PercentOfDisbursementAmount => {
                 let pct = self.percentage.unwrap_or(self.amount);
                 let raw = (transaction_amount * pct) / Decimal::from(100);
-                Money::of(self.currency, raw)
+                Money::of(self.currency.clone(), raw, FineractRoundingMode::HalfEven)
             }
-            ChargeCalculationType::Invalid => Money::zero(self.currency),
+            ChargeCalculationType::Invalid => Money::zero(&self.currency),
         }
     }
 
@@ -755,9 +803,9 @@ impl SavingsAccountCharge {
     /// Pays up to `payment_amount` against this charge and returns the remaining unpaid money.
     pub fn mark_as_paid(&mut self, payment_amount: Money) -> Money {
         let amount_to_pay = if payment_amount.amount() > self.amount_outstanding {
-            Money::of(self.currency, self.amount_outstanding)
+            Money::of(&self.currency, self.amount_outstanding, FineractRoundingMode::HalfEven)
         } else {
-            payment_amount
+            payment_amount.clone()
         };
         self.amount_paid += amount_to_pay.amount();
         self.amount_outstanding = self.calculate_outstanding();
@@ -770,7 +818,7 @@ impl SavingsAccountCharge {
 
     /// Waives the outstanding balance of this charge and returns the waived amount.
     pub fn waive(&mut self) -> Money {
-        let waived_money = Money::of(self.currency, self.amount_outstanding);
+        let waived_money = Money::of(self.currency.clone(), self.amount_outstanding, FineractRoundingMode::HalfEven);
         self.amount_waived += waived_money.amount();
         self.amount_outstanding = Decimal::ZERO;
         self.waived = true;
@@ -1378,7 +1426,7 @@ impl SavingsAccountTransaction {
         if let Some(end) = end_date {
             let days = (end - self.date_of).num_days().max(0) as i32;
             self.balance_number_of_days = Some(days);
-            let cum = Money::of(currency, self.running_balance) * i64::from(days);
+            let cum = Money::of(currency, self.running_balance, FineractRoundingMode::HalfEven) * i64::from(days);
             self.cumulative_balance = cum.amount();
         } else {
             self.balance_number_of_days = Some(0);
@@ -1390,12 +1438,12 @@ impl SavingsAccountTransaction {
         self.overdraft_amount = overdraft_amount;
     }
 
-    pub fn get_amount(&self, currency: MonetaryCurrency) -> Money {
-        Money::of(currency, self.amount)
+    pub fn get_amount(&self, currency: impl Into<MonetaryCurrency>) -> Money {
+        Money::of(currency, self.amount, FineractRoundingMode::HalfEven)
     }
 
-    pub fn get_running_balance(&self, currency: MonetaryCurrency) -> Money {
-        Money::of(currency, self.running_balance)
+    pub fn get_running_balance(&self, currency: impl Into<MonetaryCurrency>) -> Money {
+        Money::of(currency, self.running_balance, FineractRoundingMode::HalfEven)
     }
 }
 
@@ -1478,18 +1526,18 @@ impl SavingsAccountSummary {
         enforce_min_required_balance: bool,
         min_required_balance: Decimal,
     ) {
-        let mut total_deposits = Money::zero(currency);
-        let mut total_withdrawals = Money::zero(currency);
-        let mut total_interest_posted = Money::zero(currency);
-        let mut total_withdrawal_fees = Money::zero(currency);
-        let mut total_annual_fees = Money::zero(currency);
-        let mut total_fee_charge = Money::zero(currency);
-        let mut total_penalty_charge = Money::zero(currency);
-        let mut total_fee_charges_waived = Money::zero(currency);
-        let mut total_penalty_charges_waived = Money::zero(currency);
-        let mut total_overdraft_interest = Money::zero(currency);
-        let mut total_withhold_tax = Money::zero(currency);
-        let mut total_written_off = Money::zero(currency);
+        let mut total_deposits = Money::zero(&currency);
+        let mut total_withdrawals = Money::zero(&currency);
+        let mut total_interest_posted = Money::zero(&currency);
+        let mut total_withdrawal_fees = Money::zero(&currency);
+        let mut total_annual_fees = Money::zero(&currency);
+        let mut total_fee_charge = Money::zero(&currency);
+        let mut total_penalty_charge = Money::zero(&currency);
+        let mut total_fee_charges_waived = Money::zero(&currency);
+        let mut total_penalty_charges_waived = Money::zero(&currency);
+        let mut total_overdraft_interest = Money::zero(&currency);
+        let mut total_withhold_tax = Money::zero(&currency);
+        let mut total_written_off = Money::zero(&currency);
 
         let charge_penalty_lookup: BTreeMap<i64, bool> = charges
             .iter()
@@ -1500,7 +1548,7 @@ impl SavingsAccountSummary {
             if tx.is_reversed() || tx.is_reversal_transaction() {
                 continue;
             }
-            let tx_money = tx.get_amount(currency);
+            let tx_money = tx.get_amount(&currency);
             match tx.transaction_type {
                 SavingsAccountTransactionType::Deposit
                 | SavingsAccountTransactionType::DividendPayout
@@ -1591,8 +1639,9 @@ impl SavingsAccountSummary {
         };
 
         let locked = Money::of(
-            currency,
+            &currency,
             savings_amount_on_hold + on_hold_funds + effective_min_balance,
+            FineractRoundingMode::HalfEven,
         );
         let available = account_balance - locked;
         self.available_balance = available.amount();
@@ -1844,14 +1893,14 @@ impl SavingsAccount {
         approved_by_user_id: Option<i64>,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_submitted_and_pending_approval() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.approve.not.in.submittedandpendingapproval.state",
                 "Savings account cannot be approved as it is not in submitted and pending approval state.",
                 vec![self.status.code().into()],
             ));
         }
         if approved_on_date < self.submitted_on_date {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.approve.cannot.be.before.submitted.on.date",
                 "The date on which a savings account is approved cannot be before its submission date.",
                 vec![approved_on_date.to_string().into(), self.submitted_on_date.to_string().into()],
@@ -1866,7 +1915,7 @@ impl SavingsAccount {
     /// Undoes approval, returning the account from `Approved` to `SubmittedAndPendingApproval`.
     pub fn undo_approval(&mut self) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_approved() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.undoapproval.not.in.approved.state",
                 "Savings account undo approval is not allowed as the account is not in approved state.",
                 vec![self.status.code().into()],
@@ -1885,14 +1934,14 @@ impl SavingsAccount {
         rejected_by_user_id: Option<i64>,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_submitted_and_pending_approval() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.reject.not.in.submittedandpendingapproval.state",
                 "Savings account cannot be rejected as it is not in submitted and pending approval state.",
                 vec![self.status.code().into()],
             ));
         }
         if rejected_on_date < self.submitted_on_date {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.reject.cannot.be.before.submitted.on.date",
                 "The date on which a savings account is rejected cannot be before its submission date.",
                 vec![rejected_on_date.to_string().into(), self.submitted_on_date.to_string().into()],
@@ -1913,14 +1962,14 @@ impl SavingsAccount {
         withdrawn_by_user_id: Option<i64>,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_submitted_and_pending_approval() && !self.status.is_approved() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.withdraw.not.in.submittedandpendingapproval.or.approved.state",
                 "Savings account application cannot be withdrawn as it is not in submitted and pending approval or approved state.",
                 vec![self.status.code().into()],
             ));
         }
         if withdrawn_on_date < self.submitted_on_date {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.withdraw.cannot.be.before.submitted.on.date",
                 "The date on which a savings account application is withdrawn cannot be before its submission date.",
                 vec![withdrawn_on_date.to_string().into(), self.submitted_on_date.to_string().into()],
@@ -1942,7 +1991,7 @@ impl SavingsAccount {
         activated_by_user_id: Option<i64>,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_approved() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.activate.not.in.approved.state",
                 "Savings account cannot be activated as it is not in approved state.",
                 vec![self.status.code().into()],
@@ -1950,7 +1999,7 @@ impl SavingsAccount {
         }
         if let Some(approved_date) = self.approved_on_date {
             if activated_on_date < approved_date {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.activate.cannot.be.before.approved.on.date",
                     "The date on which a savings account is activated cannot be before its approval date.",
                     vec![activated_on_date.to_string().into(), approved_date.to_string().into()],
@@ -1958,7 +2007,7 @@ impl SavingsAccount {
             }
         }
         if activated_on_date < self.submitted_on_date {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.activate.cannot.be.before.submitted.on.date",
                 "The date on which a savings account is activated cannot be before its submission date.",
                 vec![activated_on_date.to_string().into(), self.submitted_on_date.to_string().into()],
@@ -1975,7 +2024,7 @@ impl SavingsAccount {
         // If min_required_opening_balance > 0 and no deposit exists yet, create the opening deposit
         if let Some(opening_balance) = self.min_required_opening_balance {
             if opening_balance > Decimal::ZERO && self.transactions.is_empty() {
-                let money = Money::of(self.currency, opening_balance);
+                let money = Money::of(self.currency.clone(), opening_balance, FineractRoundingMode::HalfEven);
                 let mut tx = SavingsAccountTransaction::deposit(
                     self.id,
                     self.office_id,
@@ -1998,7 +2047,7 @@ impl SavingsAccount {
                 let cid = c.id?;
                 let amt = c.amount_outstanding;
                 if amt > Decimal::ZERO {
-                    let money = Money::of(c.currency, amt);
+                    let money = Money::of(c.currency.clone(), amt, FineractRoundingMode::HalfEven);
                     c.mark_as_paid(money);
                     Some((cid, amt))
                 } else {
@@ -2008,7 +2057,7 @@ impl SavingsAccount {
             .collect();
 
         for (cid, amt) in activation_charges {
-            let money = Money::of(self.currency, amt);
+            let money = Money::of(self.currency.clone(), amt, FineractRoundingMode::HalfEven);
             let mut tx = SavingsAccountTransaction::pay_charge(
                 self.id,
                 self.office_id,
@@ -2035,7 +2084,7 @@ impl SavingsAccount {
         premature_closure: bool,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.status.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.close.not.in.active.state",
                 "Savings account cannot be closed as it is not in active state.",
                 vec![self.status.code().into()],
@@ -2045,14 +2094,14 @@ impl SavingsAccount {
             || self.sub_status.is_sub_status_credit_blocked()
             || self.sub_status.is_sub_status_debit_blocked()
         {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.close.account.is.blocked",
                 "Savings account cannot be closed while blocked.",
                 vec![self.sub_status.code().into()],
             ));
         }
         if !self.savings_amount_on_hold.is_zero() || !self.on_hold_funds.is_zero() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.close.amount.on.hold",
                 "Savings account cannot be closed while funds are on hold.",
                 vec![self.savings_amount_on_hold.to_string().into()],
@@ -2060,7 +2109,7 @@ impl SavingsAccount {
         }
         if let Some(activated_date) = self.activated_on_date {
             if closed_on_date < activated_date {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.close.cannot.be.before.activated.on.date",
                     "The date on which a savings account is closed cannot be before its activation date.",
                     vec![closed_on_date.to_string().into(), activated_date.to_string().into()],
@@ -2069,7 +2118,7 @@ impl SavingsAccount {
         }
         if let Some(last_tx_date) = self.retrieve_last_transaction_date() {
             if closed_on_date < last_tx_date {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.close.cannot.be.before.last.transaction.date",
                     "The closing date cannot be earlier than the last transaction date.",
                     vec![closed_on_date.to_string().into(), last_tx_date.to_string().into()],
@@ -2105,7 +2154,7 @@ impl SavingsAccount {
     ) -> Result<(), PlatformDomainRuleException> {
         self.ensure_active_for_sub_status_change("block")?;
         if self.sub_status.is_sub_status_account_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.block.already.blocked",
                 "Savings account is already blocked.",
                 vec![],
@@ -2113,7 +2162,7 @@ impl SavingsAccount {
         }
         if let Some(ref reason) = reason_for_block {
             if reason.trim().is_empty() {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.block.reason.cannot.be.blank",
                     "Reason for blocking savings account cannot be blank.",
                     vec![],
@@ -2129,7 +2178,7 @@ impl SavingsAccount {
     pub fn unblock(&mut self) -> Result<(), PlatformDomainRuleException> {
         self.ensure_active_for_sub_status_change("unblock")?;
         if !self.sub_status.is_sub_status_account_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.unblock.not.in.block.state",
                 "Savings account cannot be unblocked as it is not in blocked state.",
                 vec![self.sub_status.code().into()],
@@ -2150,7 +2199,7 @@ impl SavingsAccount {
         if self.sub_status.is_sub_status_account_blocked()
             || self.sub_status.is_sub_status_credit_blocked()
         {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.blockCredit.already.blocked",
                 "Credit transactions on this savings account are already blocked.",
                 vec![self.sub_status.code().into()],
@@ -2179,7 +2228,7 @@ impl SavingsAccount {
             self.reason_for_block = None;
             Ok(())
         } else {
-            Err(PlatformDomainRuleException::new(
+            Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.unblockCredit.not.blocked",
                 "Savings account credits are not currently blocked.",
                 vec![self.sub_status.code().into()],
@@ -2197,7 +2246,7 @@ impl SavingsAccount {
         if self.sub_status.is_sub_status_account_blocked()
             || self.sub_status.is_sub_status_debit_blocked()
         {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.blockDebit.already.blocked",
                 "Debit transactions on this savings account are already blocked.",
                 vec![self.sub_status.code().into()],
@@ -2226,7 +2275,7 @@ impl SavingsAccount {
             self.reason_for_block = None;
             Ok(())
         } else {
-            Err(PlatformDomainRuleException::new(
+            Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.unblockDebit.not.blocked",
                 "Savings account debits are not currently blocked.",
                 vec![self.sub_status.code().into()],
@@ -2250,7 +2299,7 @@ impl SavingsAccount {
             }
             SavingsAccountSubStatusEnum::Inactive => {
                 if !self.sub_status.is_sub_status_none() {
-                    return Err(PlatformDomainRuleException::new(
+                    return Err(PlatformDomainRuleException::with_args(
                         "error.msg.savingsaccount.dormancy.invalid.transition.to.inactive",
                         "Savings account can only transition to Inactive from None sub-status.",
                         vec![self.sub_status.code().into()],
@@ -2263,7 +2312,7 @@ impl SavingsAccount {
             SavingsAccountSubStatusEnum::Dormant => {
                 if !self.sub_status.is_sub_status_inactive() && !self.sub_status.is_sub_status_none()
                 {
-                    return Err(PlatformDomainRuleException::new(
+                    return Err(PlatformDomainRuleException::with_args(
                         "error.msg.savingsaccount.dormancy.invalid.transition.to.dormant",
                         "Savings account can only transition to Dormant from Inactive or None sub-status.",
                         vec![self.sub_status.code().into()],
@@ -2274,7 +2323,7 @@ impl SavingsAccount {
             }
             SavingsAccountSubStatusEnum::Escheat => {
                 if !self.sub_status.is_sub_status_dormant() {
-                    return Err(PlatformDomainRuleException::new(
+                    return Err(PlatformDomainRuleException::with_args(
                         "error.msg.savingsaccount.dormancy.invalid.transition.to.escheat",
                         "Savings account can only transition to Escheat from Dormant sub-status.",
                         vec![self.sub_status.code().into()],
@@ -2292,7 +2341,7 @@ impl SavingsAccount {
 
                 let mut escheat_tx = None;
                 if self.summary.account_balance > Decimal::ZERO {
-                    let money = Money::of(self.currency, self.summary.account_balance);
+                    let money = Money::of(self.currency.clone(), self.summary.account_balance, FineractRoundingMode::HalfEven);
                     let mut tx = SavingsAccountTransaction::escheat(
                         self.id,
                         self.office_id,
@@ -2309,7 +2358,7 @@ impl SavingsAccount {
                 }
                 Ok(escheat_tx)
             }
-            _ => Err(PlatformDomainRuleException::new(
+            _ => Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.dormancy.unsupported.substatus",
                 "Unsupported dormancy target sub-status.",
                 vec![target_sub_status.code().into()],
@@ -2326,7 +2375,7 @@ impl SavingsAccount {
                 let cid = c.id?;
                 let amt = c.amount;
                 if amt > Decimal::ZERO && self.summary.account_balance >= amt {
-                    let money = Money::of(c.currency, amt);
+                    let money = Money::of(c.currency.clone(), amt, FineractRoundingMode::HalfEven);
                     c.update_with_dral_fee_amount(amt);
                     c.mark_as_paid(money);
                     Some((cid, amt))
@@ -2338,7 +2387,7 @@ impl SavingsAccount {
 
         if !no_activity_charges.is_empty() {
             for (cid, amt) in no_activity_charges {
-                let money = Money::of(self.currency, amt);
+                let money = Money::of(self.currency.clone(), amt, FineractRoundingMode::HalfEven);
                 let mut tx = SavingsAccountTransaction::pay_charge(
                     self.id,
                     self.office_id,
@@ -2372,7 +2421,7 @@ impl SavingsAccount {
     ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
         self.validate_for_credit_transaction(transaction_date, amount)?;
 
-        let money = Money::of(self.currency, amount);
+        let money = Money::of(self.currency.clone(), amount, FineractRoundingMode::HalfEven);
         let tx_id = self.allocate_tx_id();
         let mut tx = SavingsAccountTransaction::deposit(
             self.id,
@@ -2411,7 +2460,7 @@ impl SavingsAccount {
         self.validate_for_debit_transaction(transaction_date, amount)?;
         self.validate_lockin_period(transaction_date)?;
 
-        let withdrawal_money = Money::of(self.currency, amount);
+        let withdrawal_money = Money::of(self.currency.clone(), amount, FineractRoundingMode::HalfEven);
         let should_collect_withdrawal_fee =
             !is_account_transfer || self.withdrawal_fee_for_transfer;
 
@@ -2463,7 +2512,7 @@ impl SavingsAccount {
             self.office_id,
             payment_detail_id,
             transaction_date,
-            withdrawal_money,
+            withdrawal_money.clone(),
             submitted_on_date,
         );
         withdrawal_tx.id = Some(withdrawal_tx_id);
@@ -2472,7 +2521,7 @@ impl SavingsAccount {
         for (charge_idx, charge_id, fee_money) in pending_withdrawal_fees {
             if let Some(charge) = self.charges.get_mut(charge_idx) {
                 charge.update_with_dral_fee_amount(withdrawal_money.amount());
-                charge.mark_as_paid(fee_money);
+                charge.mark_as_paid(fee_money.clone());
             }
             let fee_tx_id = self.allocate_tx_id();
             let mut fee_tx = SavingsAccountTransaction::withdrawal_fee(
@@ -2523,10 +2572,10 @@ impl SavingsAccount {
     ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
         self.validate_for_debit_transaction(transaction_date, amount)?;
 
-        let hold_money = Money::of(self.currency, amount);
+        let hold_money = Money::of(self.currency.clone(), amount, FineractRoundingMode::HalfEven);
         if lien_transaction {
             if !self.lien_allowed {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.lien.is.not.allowed",
                     "Lien is not allowed on this savings account.",
                     vec![],
@@ -2582,7 +2631,7 @@ impl SavingsAccount {
         submitted_on_date: NaiveDate,
     ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
         if !self.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.releaseAmount.not.active",
                 "Transaction is not allowed. Account is not active.",
                 vec![self.status.code().into()],
@@ -2594,37 +2643,37 @@ impl SavingsAccount {
             .iter()
             .position(|t| t.id == Some(hold_transaction_id))
             .ok_or_else(|| {
-                PlatformDomainRuleException::new(
+                PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.transaction.not.found",
                     "Savings account hold transaction was not found.",
                     vec![hold_transaction_id.into()],
                 )
             })?;
 
-        let hold_tx = &self.transactions[hold_idx];
+        let hold_tx = self.transactions[hold_idx].clone();
         if !hold_tx.is_amount_on_hold() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.release.transaction.is.not.hold",
                 "Cannot release a transaction that is not an amount-on-hold transaction.",
                 vec![hold_transaction_id.into()],
             ));
         }
         if hold_tx.is_reversed() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.release.transaction.is.reversed",
                 "Cannot release an amount-on-hold transaction that has been reversed.",
                 vec![hold_transaction_id.into()],
             ));
         }
         if hold_tx.release_id_of_hold_amount.is_some() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.hold.transaction.already.released",
                 "Hold amount on this transaction has already been released.",
                 vec![hold_transaction_id.into()],
             ));
         }
         if release_date < hold_tx.date_of {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.release.date.cannot.be.before.hold.date",
                 "Release date cannot be before the hold transaction date.",
                 vec![release_date.to_string().into(), hold_tx.date_of.to_string().into()],
@@ -2633,7 +2682,7 @@ impl SavingsAccount {
 
         let release_tx_id = self.allocate_tx_id();
         let mut release_tx =
-            SavingsAccountTransaction::release_amount(hold_tx, release_date, submitted_on_date);
+            SavingsAccountTransaction::release_amount(&hold_tx, release_date, submitted_on_date);
         release_tx.id = Some(release_tx_id);
 
         let held_amount = hold_tx.amount;
@@ -2655,7 +2704,7 @@ impl SavingsAccount {
         reversal_date: NaiveDate,
     ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
         if !self.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.reverse.not.active",
                 "Transaction reversal is not allowed when the savings account is not active.",
                 vec![self.status.code().into()],
@@ -2667,7 +2716,7 @@ impl SavingsAccount {
             .iter()
             .position(|t| t.id == Some(transaction_id))
             .ok_or_else(|| {
-                PlatformDomainRuleException::new(
+                PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.transaction.not.found",
                     "Savings account transaction with the given identifier does not exist.",
                     vec![transaction_id.into()],
@@ -2675,7 +2724,7 @@ impl SavingsAccount {
             })?;
 
         if self.transactions[tx_idx].is_reversed() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.already.reversed",
                 "Savings account transaction is already reversed.",
                 vec![transaction_id.into()],
@@ -2745,11 +2794,56 @@ impl SavingsAccount {
     /// `overdraft_amount`, `balance_end_date`, `balance_number_of_days`, and `cumulative_balance`,
     /// and refreshes `self.summary`.
     /// Mirrors `SavingsAccount.recalculateDailyBalances` in Apache Fineract.
+
+    pub fn post_interest_amount(
+        &mut self,
+        transaction_date: NaiveDate,
+        amount: Decimal,
+        submitted_on_date: NaiveDate,
+        _is_post_interest_as_on: bool,
+        is_manual: bool,
+    ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
+        let money = Money::of(self.currency.clone(), amount, FineractRoundingMode::HalfEven);
+        let mut tx = SavingsAccountTransaction::interest_posting(
+            self.id,
+            self.office_id,
+            transaction_date,
+            money,
+            submitted_on_date,
+            is_manual,
+        );
+        tx.id = Some(self.allocate_tx_id());
+        self.transactions.push(tx.clone());
+        Ok(tx)
+    }
+
+    pub fn post_overdraft_interest_amount(
+        &mut self,
+        transaction_date: NaiveDate,
+        amount: Decimal,
+        submitted_on_date: NaiveDate,
+        _is_post_interest_as_on: bool,
+        is_manual: bool,
+    ) -> Result<SavingsAccountTransaction, PlatformDomainRuleException> {
+        let money = Money::of(self.currency.clone(), amount, FineractRoundingMode::HalfEven);
+        let mut tx = SavingsAccountTransaction::overdraft_interest(
+            self.id,
+            self.office_id,
+            transaction_date,
+            money,
+            submitted_on_date,
+            is_manual,
+        );
+        tx.id = Some(self.allocate_tx_id());
+        self.transactions.push(tx.clone());
+        Ok(tx)
+    }
+
     pub fn recalculate_daily_balances(&mut self, reference_date: NaiveDate) {
         self.transactions.sort_by(compare_savings_transactions);
 
-        let currency = self.currency;
-        let mut running_balance = Money::zero(currency);
+        let currency = self.currency.clone();
+        let mut running_balance = Money::zero(currency.clone());
 
         // Pass 1: Zero reversed transactions and compute running_balance & overdraft_amount
         for tx in &mut self.transactions {
@@ -2759,14 +2853,14 @@ impl SavingsAccount {
                 continue;
             }
 
-            let tx_amount = tx.get_amount(currency);
+            let tx_amount = tx.get_amount(currency.clone());
             let mut overdraft_amount: Option<Money> = None;
 
             if tx.is_credit() {
                 if running_balance.is_less_than_zero() {
-                    let diff = running_balance + tx_amount;
+                    let diff = running_balance.clone() + tx_amount.clone();
                     if diff.is_less_than_zero() {
-                        overdraft_amount = Some(tx_amount);
+                        overdraft_amount = Some(tx_amount.clone());
                     } else {
                         overdraft_amount = Some(running_balance.negated());
                     }
@@ -2774,7 +2868,7 @@ impl SavingsAccount {
                 running_balance = running_balance + tx_amount;
             } else if tx.is_debit() {
                 if running_balance.is_less_than_zero() {
-                    overdraft_amount = Some(tx_amount);
+                    overdraft_amount = Some(tx_amount.clone());
                 }
                 running_balance = running_balance - tx_amount;
                 if overdraft_amount.is_none() && running_balance.is_less_than_zero() {
@@ -2782,7 +2876,7 @@ impl SavingsAccount {
                 }
             }
 
-            tx.update_running_balance(running_balance);
+            tx.update_running_balance(running_balance.clone());
             tx.update_overdraft_amount(overdraft_amount.map(|m| m.amount()));
         }
 
@@ -2808,11 +2902,11 @@ impl SavingsAccount {
                 None => Some(reference_date.max(tx_date)),
             };
 
-            self.transactions[tx_idx].update_cumulative_balance_and_dates(currency, end_date);
+            self.transactions[tx_idx].update_cumulative_balance_and_dates(currency.clone(), end_date);
         }
 
         self.summary.update_summary(
-            self.currency,
+            self.currency.clone(),
             &self.transactions,
             &self.charges,
             self.savings_amount_on_hold,
@@ -2836,7 +2930,7 @@ impl SavingsAccount {
         action: &str,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 format!("error.msg.savingsaccount.{action}.not.in.active.state"),
                 format!("Savings account {action} is not allowed because the account is not active."),
                 vec![self.status.code().into()],
@@ -2851,28 +2945,28 @@ impl SavingsAccount {
         amount: Decimal,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.account.is.not.active",
                 "Transaction is not allowed. Account is not active.",
                 vec![self.status.code().into()],
             ));
         }
         if self.sub_status.is_sub_status_account_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.account.is.blocked",
                 "Transaction is not allowed. Account is blocked.",
                 vec![self.id.unwrap_or(0).into()],
             ));
         }
         if self.sub_status.is_sub_status_credit_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.credits.are.blocked",
                 "Credit transactions are blocked on this savings account.",
                 vec![self.id.unwrap_or(0).into()],
             ));
         }
         if amount <= Decimal::ZERO {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.amount.must.be.greater.than.zero",
                 "Transaction amount must be greater than zero.",
                 vec![amount.to_string().into()],
@@ -2880,7 +2974,7 @@ impl SavingsAccount {
         }
         if let Some(activated_date) = self.activated_on_date {
             if transaction_date < activated_date {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.transaction.before.activation.date",
                     "Transaction date cannot be before the account activation date.",
                     vec![
@@ -2899,28 +2993,28 @@ impl SavingsAccount {
         amount: Decimal,
     ) -> Result<(), PlatformDomainRuleException> {
         if !self.is_active() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.account.is.not.active",
                 "Transaction is not allowed. Account is not active.",
                 vec![self.status.code().into()],
             ));
         }
         if self.sub_status.is_sub_status_account_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.account.is.blocked",
                 "Transaction is not allowed. Account is blocked.",
                 vec![self.id.unwrap_or(0).into()],
             ));
         }
         if self.sub_status.is_sub_status_debit_blocked() {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.debits.are.blocked",
                 "Debit transactions are blocked on this savings account.",
                 vec![self.id.unwrap_or(0).into()],
             ));
         }
         if amount <= Decimal::ZERO {
-            return Err(PlatformDomainRuleException::new(
+            return Err(PlatformDomainRuleException::with_args(
                 "error.msg.savingsaccount.transaction.amount.must.be.greater.than.zero",
                 "Transaction amount must be greater than zero.",
                 vec![amount.to_string().into()],
@@ -2928,7 +3022,7 @@ impl SavingsAccount {
         }
         if let Some(activated_date) = self.activated_on_date {
             if transaction_date < activated_date {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.transaction.before.activation.date",
                     "Transaction date cannot be before the account activation date.",
                     vec![
@@ -2947,7 +3041,7 @@ impl SavingsAccount {
     ) -> Result<(), PlatformDomainRuleException> {
         if let Some(locked_until) = self.lockedin_until_date_derived {
             if transaction_date <= locked_until {
-                return Err(PlatformDomainRuleException::new(
+                return Err(PlatformDomainRuleException::with_args(
                     "error.msg.savingsaccount.withdrawal.locked.in.until.date",
                     "Withdrawals are not allowed before the lock-in period expires.",
                     vec![
@@ -3017,7 +3111,7 @@ impl SavingsAccount {
         fee_amount: Decimal,
         available_withdrawable: Decimal,
     ) -> PlatformDomainRuleException {
-        PlatformDomainRuleException::new(
+        PlatformDomainRuleException::with_args(
             "error.msg.savingsaccount.transaction.insufficient.account.balance",
             "Insufficient account balance for withdrawal transaction.",
             vec![

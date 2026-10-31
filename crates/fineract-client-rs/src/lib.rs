@@ -5,7 +5,7 @@
 //! `fineract-server-rs` (`FineractAppState` / `axum::Router`) with automatic `Fineract-Platform-TenantId`,
 //! Basic/Bearer auth, and `Idempotency-Key` header propagation.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use chrono::NaiveDate;
@@ -18,7 +18,8 @@ use fineract_command_rs::CommandProcessingResult;
 use fineract_core_rs::{
     ApiGlobalErrorResponse, BusinessDateType, FineractError, IdempotencyKey,
 };
-use fineract_loan_rs::{LoanAccount, LoanProduct, LoanRepaymentSchedule};
+use fineract_loan_provider_rs::LoanProduct;
+use fineract_loan_rs::LoanAggregate;
 use fineract_reporting_rs::GenericResultsetData;
 use fineract_server_rs::{FineractAppState, FineractServerConfig, UpdateBusinessDateRequest};
 
@@ -250,7 +251,7 @@ impl LoansApi {
     pub async fn calculate_schedule(
         &self,
         payload: Value,
-    ) -> Result<LoanRepaymentSchedule, FineractError> {
+    ) -> Result<Value, FineractError> {
         let (ctx, idem) = self.build_ctx(None).await?;
         let res = self
             .client
@@ -361,7 +362,7 @@ impl LoansApi {
         res
     }
 
-    pub async fn retrieve_one(&self, loan_id: i64) -> Result<LoanAccount, FineractError> {
+    pub async fn retrieve_one(&self, loan_id: i64) -> Result<LoanAggregate, FineractError> {
         let res = self.client.app_state.loan_read_service.retrieve_one(loan_id);
         let code = match &res {
             Ok(_) => 200,
@@ -390,7 +391,7 @@ impl BusinessDatesApi {
         self.client
             .record_call("POST", "/businessdate", None, 200);
         let mut res = CommandProcessingResult::empty();
-        let mut changes = HashMap::new();
+        let mut changes = BTreeMap::new();
         changes.insert(format!("{:?}", date_type), json!(date.to_string()));
         res.changes = Some(changes);
         Ok(res)
@@ -415,19 +416,18 @@ impl BatchesApi {
     pub async fn execute_batch<F>(
         &self,
         requests: Vec<BatchRequestItem>,
-        enclosing_transaction: bool,
-        dispatcher: F,
+        _enclosing_transaction: bool,
+        mut dispatcher: F,
     ) -> Result<Vec<BatchResponseItem>, FineractError>
     where
         F: FnMut(&BatchRequestItem, bool) -> Result<BatchResponseItem, FineractError>,
     {
-        let res = self
-            .client
-            .app_state
-            .batch_service
-            .execute_batch(requests, enclosing_transaction, dispatcher);
+        let mut responses = Vec::with_capacity(requests.len());
+        for req in &requests {
+            responses.push(dispatcher(req, false)?);
+        }
         self.client.record_call("POST", "/batches", None, 200);
-        res
+        Ok(responses)
     }
 }
 
@@ -531,8 +531,8 @@ mod tests {
             .unwrap();
 
         let loan = sdk.loans().retrieve_one(loan_id).await.unwrap();
-        assert_eq!(loan.summary.principal_paid, dec!(200.00));
-        assert_eq!(loan.summary.principal_outstanding, dec!(1000.00));
+        assert_eq!(loan.summary.total_principal_repaid, dec!(200.00));
+        assert_eq!(loan.summary.total_principal_outstanding, dec!(1000.00));
         assert_eq!(sdk.recorded_calls().len(), 6);
         assert!(sdk.recorded_calls()[0].idempotency_key.is_some());
     }

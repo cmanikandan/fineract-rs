@@ -188,7 +188,7 @@ impl FromStr for InteropIdentifierType {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::resolve_name(s).ok_or_else(|| {
-            FineractError::DomainRule(PlatformDomainRuleException::new(
+            FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.identifier.type.invalid",
                 format!("Invalid interop identifier type: {s}"),
                 vec![s.to_string().into()],
@@ -260,7 +260,7 @@ impl FromStr for InteropTransactionRole {
         match s.trim().to_ascii_uppercase().as_str() {
             "PAYER" => Ok(Self::Payer),
             "PAYEE" => Ok(Self::Payee),
-            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::new(
+            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.transaction.role.invalid",
                 format!("Invalid interop transaction role: {s}"),
                 vec![s.to_string().into()],
@@ -311,7 +311,7 @@ impl FromStr for InteropActionState {
         match s.trim().to_ascii_uppercase().as_str() {
             "ACCEPTED" => Ok(Self::Accepted),
             "REJECTED" => Ok(Self::Rejected),
-            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::new(
+            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.action.state.invalid",
                 format!("Invalid interop action state: {s}"),
                 vec![s.to_string().into()],
@@ -353,7 +353,7 @@ impl FromStr for InteropAmountType {
         match s.trim().to_ascii_uppercase().as_str() {
             "SEND" => Ok(Self::Send),
             "RECEIVE" => Ok(Self::Receive),
-            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::new(
+            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.amount.type.invalid",
                 format!("Invalid interop amount type: {s}"),
                 vec![s.to_string().into()],
@@ -397,7 +397,7 @@ impl FromStr for InteropTransferActionType {
             "PREPARE" => Ok(Self::Prepare),
             "CREATE" | "COMMIT" => Ok(Self::Create),
             "RELEASE" => Ok(Self::Release),
-            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::new(
+            _ => Err(FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.transfer.action.invalid",
                 format!("Invalid interop transfer action: {s}"),
                 vec![s.to_string().into()],
@@ -794,9 +794,10 @@ impl InteropDomainException {
     /// Account not found for the given ID or party identifier (`InteropAccountNotFoundException`).
     pub fn account_not_found(identifier_desc: impl Into<String>) -> FineractError {
         let desc = identifier_desc.into();
-        FineractError::NotFound {
-            globalisation_message_code: "error.msg.interop.account.not.found".to_string(),
-            default_user_message: format!("Savings account not found for {desc}"),
+        FineractError::ResourceNotFound {
+            globalisation_code: "error.msg.interop.account.not.found".to_string(),
+            default_message: format!("Savings account not found for {desc}"),
+            resource_id: desc,
         }
     }
 
@@ -810,16 +811,17 @@ impl InteropDomainException {
             Some(sub) => format!("{id_type}:{a_value}:{sub}"),
             None => format!("{id_type}:{a_value}"),
         };
-        FineractError::NotFound {
-            globalisation_message_code: "error.msg.interop.identifier.not.found".to_string(),
-            default_user_message: format!("Interop party identifier not found for {detail}"),
+        FineractError::ResourceNotFound {
+            globalisation_code: "error.msg.interop.identifier.not.found".to_string(),
+            default_message: format!("Interop party identifier not found for {detail}"),
+            resource_id: detail,
         }
     }
 
     /// Duplicate `(account_id, type)` or `(type, a_value, sub_value_or_type)` registration.
     pub fn duplicate_identifier(reason: impl Into<String>) -> FineractError {
         let msg = reason.into();
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.identifier.duplicate",
             msg.clone(),
             vec![msg.into()],
@@ -828,7 +830,7 @@ impl InteropDomainException {
 
     /// Transfer amount is already placed on hold for `transfer_code` (`InteropTransferAlreadyOnHoldException`).
     pub fn transfer_already_on_hold(transfer_code: &str) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.transfer.already.on.hold",
             format!("Transfer amount was already put on hold for transfer: {transfer_code}"),
             vec![transfer_code.to_string().into()],
@@ -837,7 +839,7 @@ impl InteropDomainException {
 
     /// Transfer has already been committed/settled for `transfer_code` (`InteropTransferAlreadyCommittedException`).
     pub fn transfer_already_committed(transfer_code: &str) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.transfer.already.committed",
             format!("Transfer was already committed for transfer: {transfer_code}"),
             vec![transfer_code.to_string().into()],
@@ -846,7 +848,7 @@ impl InteropDomainException {
 
     /// Expected active hold transaction is missing or does not match `transfer_code` (`InteropTransferMissingException`).
     pub fn transfer_hold_missing(transfer_code: &str) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.onhold.transfer.missing",
             format!("No active on-hold transaction found matching transfer: {transfer_code}"),
             vec![transfer_code.to_string().into()],
@@ -855,7 +857,7 @@ impl InteropDomainException {
 
     /// Currency mismatch between account and request payload (`validateCurrencies` in `InteropServiceImpl`).
     pub fn currency_mismatch(account_currency: &str, request_currency: &str) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.currency.not.match",
             format!(
                 "Account currency '{account_currency}' does not match request currency '{request_currency}'"
@@ -870,7 +872,7 @@ impl InteropDomainException {
     /// Account status or sub-status disallows the requested debit/credit (`validateTransaction` in `InteropServiceImpl`).
     pub fn transaction_not_allowed(account_id: i64, reason: impl Into<String>) -> FineractError {
         let reason_str = reason.into();
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.transaction.not.allowed",
             format!("Transaction is not allowed on savings account {account_id}: {reason_str}"),
             vec![account_id.into(), reason_str.into()],
@@ -883,7 +885,7 @@ impl InteropDomainException {
         fee_amount: Decimal,
         withdrawable_balance: Decimal,
     ) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.savingsaccount.transaction.insufficient.account.balance",
             format!(
                 "Insufficient account balance: required {} (amount {} + fee {}), withdrawable {}",
@@ -902,7 +904,7 @@ impl InteropDomainException {
 
     /// Quote or transfer request has already passed its `expiration` timestamp.
     pub fn request_expired(code: &str, expiration: DateTime<Utc>) -> FineractError {
-        FineractError::DomainRule(PlatformDomainRuleException::new(
+        FineractError::DomainRule(PlatformDomainRuleException::with_args(
             "error.msg.interop.request.expired",
             format!("Interoperation request '{code}' expired at {expiration}"),
             vec![code.to_string().into(), expiration.to_rfc3339().into()],
@@ -1025,7 +1027,7 @@ impl DualDbInteropRepository {
     pub fn insert_identifier_sql(dialect: SqlDialect) -> String {
         let base = "INSERT INTO interop_identifier \
             (account_id, type, a_value, sub_value_or_type, created_by, created_on, modified_by, modified_on) \
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)";
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         DialectSql::rewrite_placeholders(base, dialect)
     }
 
@@ -1036,10 +1038,10 @@ impl DualDbInteropRepository {
     ) -> String {
         let base = if has_sub_value {
             "SELECT id, account_id, type, a_value, sub_value_or_type, created_by, created_on, modified_by, modified_on \
-             FROM interop_identifier WHERE type = $1 AND a_value = $2 AND sub_value_or_type = $3"
+             FROM interop_identifier WHERE type = ? AND a_value = ? AND sub_value_or_type = ?"
         } else {
             "SELECT id, account_id, type, a_value, sub_value_or_type, created_by, created_on, modified_by, modified_on \
-             FROM interop_identifier WHERE type = $1 AND a_value = $2 AND sub_value_or_type IS NULL"
+             FROM interop_identifier WHERE type = ? AND a_value = ? AND sub_value_or_type IS NULL"
         };
         DialectSql::rewrite_placeholders(base, dialect)
     }
@@ -1047,7 +1049,7 @@ impl DualDbInteropRepository {
     /// Builds the `SELECT` query to list all party identifiers registered for an `account_id`.
     pub fn select_identifiers_by_account_sql(dialect: SqlDialect) -> String {
         let base = "SELECT id, account_id, type, a_value, sub_value_or_type, created_by, created_on, modified_by, modified_on \
-                    FROM interop_identifier WHERE account_id = $1 ORDER BY id ASC";
+                    FROM interop_identifier WHERE account_id = ? ORDER BY id ASC";
         DialectSql::rewrite_placeholders(base, dialect)
     }
 
@@ -1057,9 +1059,9 @@ impl DualDbInteropRepository {
         has_sub_value: bool,
     ) -> String {
         let base = if has_sub_value {
-            "DELETE FROM interop_identifier WHERE type = $1 AND a_value = $2 AND sub_value_or_type = $3"
+            "DELETE FROM interop_identifier WHERE type = ? AND a_value = ? AND sub_value_or_type = ?"
         } else {
-            "DELETE FROM interop_identifier WHERE type = $1 AND a_value = $2 AND sub_value_or_type IS NULL"
+            "DELETE FROM interop_identifier WHERE type = ? AND a_value = ? AND sub_value_or_type IS NULL"
         };
         DialectSql::rewrite_placeholders(base, dialect)
     }
@@ -1289,7 +1291,7 @@ impl InteroperationService {
         sub_value_or_type: Option<&str>,
         created_by: Option<&str>,
     ) -> FineractResult<InteropIdentifier> {
-        let mut validator = DataValidatorBuilder::new(ENTITY_NAME_IDENTIFIER);
+        let mut validator = DataValidatorBuilder::for_resource(ENTITY_NAME_IDENTIFIER);
         validator
             .reset()
             .parameter(PARAM_IDENTIFIER_VALUE)
@@ -1924,7 +1926,7 @@ impl InteroperationService {
     // ------------------------------------------------------------------------
 
     fn validate_quote_request(request: &InteropQuoteRequestData) -> FineractResult<()> {
-        let mut validator = DataValidatorBuilder::new(ENTITY_NAME_QUOTE);
+        let mut validator = DataValidatorBuilder::for_resource(ENTITY_NAME_QUOTE);
         validator
             .reset()
             .parameter(PARAM_TRANSACTION_CODE)
@@ -1954,7 +1956,7 @@ impl InteroperationService {
     }
 
     fn validate_transfer_request(request: &InteropTransferRequestData) -> FineractResult<()> {
-        let mut validator = DataValidatorBuilder::new(ENTITY_NAME_TRANSFER);
+        let mut validator = DataValidatorBuilder::for_resource(ENTITY_NAME_TRANSFER);
         validator
             .reset()
             .parameter(PARAM_TRANSACTION_CODE)
@@ -2164,14 +2166,14 @@ fn parse_money_from_command(
         };
         let amount = match raw_amt {
             serde_json::Value::Number(n) => Decimal::from_str(&n.to_string()).map_err(|e| {
-                FineractError::DomainRule(PlatformDomainRuleException::new(
+                FineractError::DomainRule(PlatformDomainRuleException::with_args(
                     "error.msg.interop.amount.invalid",
                     format!("Invalid decimal amount in '{param_name}': {e}"),
                     vec![],
                 ))
             })?,
             serde_json::Value::String(s) => Decimal::from_str(s.trim()).map_err(|e| {
-                FineractError::DomainRule(PlatformDomainRuleException::new(
+                FineractError::DomainRule(PlatformDomainRuleException::with_args(
                     "error.msg.interop.amount.invalid",
                     format!("Invalid decimal amount in '{param_name}': {e}"),
                     vec![],
@@ -2219,10 +2221,10 @@ fn resolve_command_account_id(
     service: &InteroperationService,
     command: &JsonCommand,
 ) -> FineractResult<i64> {
-    if let Some(id) = command.long_value_of_parameter_named(PARAM_ACCOUNT_ID)? {
-        return Ok(id);
-    }
     if let Some(raw) = command.string_value_of_parameter_named(PARAM_ACCOUNT_ID) {
+        if let Ok(id) = raw.parse::<i64>() {
+            return Ok(id);
+        }
         if let Some(resolved) = service.repository().resolve_account_id(&raw) {
             return Ok(resolved);
         }
@@ -2247,7 +2249,7 @@ fn parse_transfer_request_from_command(
         .unwrap_or_default();
     let transfer_code = command
         .string_value_of_parameter_named(PARAM_TRANSFER_CODE)
-        .or_else(|| command.resource_external_id.as_ref().map(|e| e.as_str().to_string()))
+        .or_else(|| command.resource_external_id.as_ref().and_then(|e| e.value().map(ToString::to_string)))
         .unwrap_or_default();
     let role_str = command
         .string_value_of_parameter_named(PARAM_TRANSACTION_ROLE)
@@ -2256,7 +2258,7 @@ fn parse_transfer_request_from_command(
 
     let amount = parse_money_from_command(command, PARAM_AMOUNT, &account.currency)?
         .ok_or_else(|| {
-            FineractError::DomainRule(PlatformDomainRuleException::new(
+            FineractError::DomainRule(PlatformDomainRuleException::with_args(
                 "error.msg.interop.amount.required",
                 "Parameter 'amount' is required for interop transfer",
                 vec![],
@@ -2310,11 +2312,11 @@ impl CommandHandler for RegisterInteropIdentifierCommandHandler {
         let id_type = InteropIdentifierType::from_str(&id_type_str)?;
         let id_value = command
             .string_value_of_parameter_named(PARAM_IDENTIFIER_VALUE)
-            .or_else(|| command.resource_external_id.as_ref().map(|e| e.as_str().to_string()))
+            .or_else(|| command.resource_external_id.as_ref().and_then(|e| e.value().map(ToString::to_string)))
             .unwrap_or_default();
         let sub_id_or_type = command.string_value_of_parameter_named(PARAM_SUB_ID_OR_TYPE);
 
-        let created_by = ctx.user_id.map(|u| u.to_string());
+        let created_by = ctx.authenticated_user_id.map(|u| u.to_string());
         let registered = self.service.register_party_identifier(
             account_id,
             id_type,
@@ -2370,7 +2372,7 @@ impl CommandHandler for DeleteInteropIdentifierCommandHandler {
         let id_type = InteropIdentifierType::from_str(&id_type_str)?;
         let id_value = command
             .string_value_of_parameter_named(PARAM_IDENTIFIER_VALUE)
-            .or_else(|| command.resource_external_id.as_ref().map(|e| e.as_str().to_string()))
+            .or_else(|| command.resource_external_id.as_ref().and_then(|e| e.value().map(ToString::to_string)))
             .unwrap_or_default();
         let sub_id_or_type = command.string_value_of_parameter_named(PARAM_SUB_ID_OR_TYPE);
 
@@ -2430,7 +2432,7 @@ impl CommandHandler for CreateInteropQuoteCommandHandler {
 
         let amount = parse_money_from_command(command, PARAM_AMOUNT, &account.currency)?
             .ok_or_else(|| {
-                FineractError::DomainRule(PlatformDomainRuleException::new(
+                FineractError::DomainRule(PlatformDomainRuleException::with_args(
                     "error.msg.interop.amount.required",
                     "Parameter 'amount' is required for interop quote",
                     vec![],
@@ -2948,13 +2950,13 @@ mod tests {
 
         // 1. Register identifier via CommandHandler
         let register_handler = RegisterInteropIdentifierCommandHandler::new(Arc::clone(&service));
-        let reg_cmd = JsonCommand::new(
-            1,
+        let reg_cmd = JsonCommand::from_raw(
             json!({
                 "accountId": "ext-505",
                 "idType": "MSISDN",
                 "idValue": "+14155550199"
-            }),
+            }).to_string(),
+            Some(1),
         );
         let reg_res = register_handler
             .handle(&ctx, &reg_cmd)
@@ -2964,8 +2966,7 @@ mod tests {
 
         // 2. Quote via CommandHandler
         let quote_handler = CreateInteropQuoteCommandHandler::new(Arc::clone(&service));
-        let quote_cmd = JsonCommand::new(
-            2,
+        let quote_cmd = JsonCommand::from_raw(
             json!({
                 "transactionCode": "tx-cmd-1",
                 "quoteCode": "quote-cmd-1",
@@ -2973,14 +2974,15 @@ mod tests {
                 "transactionRole": "PAYER",
                 "amount": { "amount": "200.00", "currency": "USD" },
                 "fees": { "amount": "1.50", "currency": "USD" }
-            }),
+            }).to_string(),
+            Some(2),
         );
         let quote_res = quote_handler
             .handle(&ctx, &quote_cmd)
             .await
             .expect("quote command handler");
         assert_eq!(
-            quote_res.resource_external_id.as_ref().map(|e| e.as_str()),
+            quote_res.resource_external_id.as_ref().and_then(|e| e.as_str()),
             Some("quote-cmd-1")
         );
 
@@ -2994,7 +2996,7 @@ mod tests {
             "amount": { "amount": "200.00", "currency": "USD" },
             "fspFee": { "amount": "1.50", "currency": "USD" }
         });
-        let prep_cmd = JsonCommand::new(3, transfer_payload.clone());
+        let prep_cmd = JsonCommand::from_raw(transfer_payload.to_string(), Some(3));
         let prep_res = prepare_handler
             .handle(&ctx, &prep_cmd)
             .await
@@ -3002,7 +3004,7 @@ mod tests {
         assert!(prep_res.transaction_id.is_some());
 
         let commit_handler = CommitInteropTransferCommandHandler::new(Arc::clone(&service));
-        let commit_cmd = JsonCommand::new(4, transfer_payload);
+        let commit_cmd = JsonCommand::from_raw(transfer_payload.to_string(), Some(4));
         let commit_res = commit_handler
             .handle(&ctx, &commit_cmd)
             .await

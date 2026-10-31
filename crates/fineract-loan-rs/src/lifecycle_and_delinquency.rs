@@ -864,23 +864,24 @@ pub struct CollectionData {
 
 impl CollectionData {
     /// Creates an empty/zeroed [`CollectionData`] instance (`CollectionData.template()`).
-    pub fn template(currency: MonetaryCurrency, mode: FineractRoundingMode) -> Self {
-        let zero = Money::zero(currency, mode);
+    pub fn template(currency: impl Into<MonetaryCurrency>, _mode: FineractRoundingMode) -> Self {
+        let currency = currency.into();
+        let zero = Money::zero(&currency);
         Self {
-            available_disbursement_amount: zero,
-            available_disbursement_amount_with_over_applied: zero,
+            available_disbursement_amount: zero.clone(),
+            available_disbursement_amount_with_over_applied: zero.clone(),
             past_due_days: 0,
             next_payment_due_date: None,
             delinquent_date: None,
             past_due_date: None,
             delinquent_days: 0,
-            delinquent_amount: zero,
-            delinquent_principal: zero,
-            delinquent_interest: zero,
-            delinquent_fee: zero,
-            delinquent_penalty: zero,
+            delinquent_amount: zero.clone(),
+            delinquent_principal: zero.clone(),
+            delinquent_interest: zero.clone(),
+            delinquent_fee: zero.clone(),
+            delinquent_penalty: zero.clone(),
             last_payment_date: None,
-            last_payment_amount: zero,
+            last_payment_amount: zero.clone(),
             last_repayment_date: None,
             last_repayment_amount: zero,
             delinquency_range_id: None,
@@ -1027,9 +1028,9 @@ impl DelinquencyCalculationEngine {
         business_date: NaiveDate,
         bucket: Option<&'a DelinquencyBucket>,
     ) -> (CollectionData, Option<&'a DelinquencyRange>) {
-        let currency = loan.currency;
+        let currency = &loan.currency;
         let mode = loan.rounding_mode;
-        let zero = Money::zero(currency, mode);
+        let zero = Money::zero(currency);
         let mut data = CollectionData::template(currency, mode);
 
         let effective_pauses =
@@ -1040,7 +1041,7 @@ impl DelinquencyCalculationEngine {
             (loan.approved_principal - loan.summary.total_principal_disbursed).max(Decimal::ZERO);
         data.available_disbursement_amount = Money::of(currency, available_disb, mode);
         data.available_disbursement_amount_with_over_applied =
-            data.available_disbursement_amount;
+            data.available_disbursement_amount.clone();
 
         // Populate last payment / repayment info from non-reversed transactions
         for tx in &loan.transactions {
@@ -1108,17 +1109,13 @@ impl DelinquencyCalculationEngine {
                     let inst_fee = Money::of(currency, inst.fee_charges_outstanding(), mode);
                     let inst_penalty =
                         Money::of(currency, inst.penalty_charges_outstanding(), mode);
-                    let inst_total = inst_principal
-                        .plus(inst_interest, mode)
-                        .plus(inst_fee, mode)
-                        .plus(inst_penalty, mode);
+                    let inst_total = inst_principal.clone() + inst_interest.clone() + inst_fee.clone() + inst_penalty.clone();
 
-                    data.delinquent_principal =
-                        data.delinquent_principal.plus(inst_principal, mode);
-                    data.delinquent_interest = data.delinquent_interest.plus(inst_interest, mode);
-                    data.delinquent_fee = data.delinquent_fee.plus(inst_fee, mode);
-                    data.delinquent_penalty = data.delinquent_penalty.plus(inst_penalty, mode);
-                    data.delinquent_amount = data.delinquent_amount.plus(inst_total, mode);
+                    data.delinquent_principal += &inst_principal;
+                    data.delinquent_interest += &inst_interest;
+                    data.delinquent_fee += &inst_fee;
+                    data.delinquent_penalty += &inst_penalty;
+                    data.delinquent_amount += &inst_total;
 
                     let inst_past_due_days = (business_date - inst_overdue_date).num_days().max(0);
                     let inst_paused_days: i64 = effective_pauses
@@ -1128,7 +1125,7 @@ impl DelinquencyCalculationEngine {
                     let inst_delinquent_days = (inst_past_due_days - inst_paused_days).max(0);
                     let inst_range = bucket.and_then(|b| b.resolve_range(inst_delinquent_days));
 
-                    if inst_total > zero {
+                    if inst_total > zero.clone() {
                         data.installment_level_delinquency
                             .push(InstallmentLevelDelinquency {
                                 installment_number: inst.installment_number,
@@ -1685,7 +1682,7 @@ impl LoanAggregate {
                 .or_else(|| {
                     self.disbursed_amount_percentage_for_down_payment.map(|pct| {
                         Money::of(
-                            self.currency,
+                            &self.currency,
                             amount * pct / Decimal::from(100),
                             self.rounding_mode,
                         )
@@ -2415,7 +2412,7 @@ impl LoanAggregate {
                     .clamp(0, total_days);
                 let raw = recognizabale_interest * Decimal::from(elapsed_days)
                     / Decimal::from(total_days);
-                Money::of(self.currency, raw, self.rounding_mode).amount()
+                Money::of(&self.currency, raw, self.rounding_mode).amount()
             };
 
             if target_interest > inst.interest_accrued {

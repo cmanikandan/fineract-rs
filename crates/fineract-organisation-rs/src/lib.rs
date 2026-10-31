@@ -1808,9 +1808,12 @@ impl DualDbOrganisationRepository {
                 let name: String = row
                     .try_get("name")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-                let opening_date: NaiveDate = row
+                let opening_date_str: String = row
                     .try_get("opening_date")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                let opening_date = NaiveDate::parse_from_str(&opening_date_str, "%Y-%m-%d")
+                    .or_else(|_| NaiveDate::parse_from_str(opening_date_str.split('T').next().unwrap_or(&opening_date_str), "%Y-%m-%d"))
+                    .unwrap_or_else(|_| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
                 let office = Office {
                     id,
                     parent_id,
@@ -1872,7 +1875,7 @@ impl DualDbOrganisationRepository {
                 .bind(&office.hierarchy)
                 .bind(office.external_id.value())
                 .bind(&office.name)
-                .bind(office.opening_date)
+                .bind(office.opening_date.to_string())
                 .execute(pool)
                 .await
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -1896,7 +1899,7 @@ impl DualDbOrganisationRepository {
                 .bind(&office.hierarchy)
                 .bind(office.external_id.value())
                 .bind(&office.name)
-                .bind(office.opening_date)
+                .bind(office.opening_date.to_string())
                 .bind(office.id)
                 .execute(pool)
                 .await
@@ -1975,8 +1978,11 @@ impl DualDbOrganisationRepository {
                     .try_get("is_active")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let joining_date: Option<NaiveDate> = row
-                    .try_get("joining_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("joining_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                        .or_else(|_| NaiveDate::parse_from_str(s.split('T').next().unwrap_or(&s), "%Y-%m-%d"))
+                        .ok());
                 let mobile_no: Option<String> = row
                     .try_get("mobile_no")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2057,7 +2063,7 @@ impl DualDbOrganisationRepository {
                 .bind(&staff.display_name)
                 .bind(staff.is_loan_officer)
                 .bind(staff.is_active)
-                .bind(staff.joining_date)
+                .bind(staff.joining_date.map(|d| d.to_string()))
                 .bind(&staff.mobile_no)
                 .bind(staff.external_id.value())
                 .bind(staff.organisational_role_type)
@@ -2085,7 +2091,7 @@ impl DualDbOrganisationRepository {
                 .bind(&staff.display_name)
                 .bind(staff.is_loan_officer)
                 .bind(staff.is_active)
-                .bind(staff.joining_date)
+                .bind(staff.joining_date.map(|d| d.to_string()))
                 .bind(&staff.mobile_no)
                 .bind(staff.external_id.value())
                 .bind(staff.organisational_role_type)

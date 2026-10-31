@@ -527,7 +527,7 @@ impl OverdueChargeSpec {
                     / dec!(100)
             }
         };
-        raw.round_dp_with_strategy(currency_digits, RoundingStrategy::MidpointEven)
+        raw.round_dp_with_strategy(currency_digits, RoundingStrategy::MidpointNearestEven)
     }
 }
 
@@ -1390,7 +1390,7 @@ impl CobBusinessStep for LoanInterestRecalculationBusinessStep {
             // If an installment is overdue as of cob_business_date, accrue 1 day of additional interest on overdue principal
             if inst.due_date < cob_business_date {
                 let daily_overdue_interest = (inst.principal_outstanding() * daily_rate)
-                    .round_dp_with_strategy(currency_digits, RoundingStrategy::MidpointEven);
+                    .round_dp_with_strategy(currency_digits, RoundingStrategy::MidpointNearestEven);
                 if daily_overdue_interest > Decimal::ZERO {
                     inst.interest_charged += daily_overdue_interest;
                     inst.recalculated_interest_component = true;
@@ -2480,15 +2480,14 @@ impl InlineLoanCobExecutor {
 
     /// Intercepts an incoming write command targeting `loan_id` stored in [`CobLoanStore`],
     /// runs day-by-day Inline COB catch-up through `current_cob_date`, and then executes `command_fn`.
-    pub async fn intercept_write_command<F, Fut, R>(
+    pub async fn intercept_write_command<F, R>(
         &self,
         loan_id: i64,
         current_cob_date: NaiveDate,
         command_fn: F,
     ) -> Result<(InlineCobExecutionReport, R), FineractError>
     where
-        F: FnOnce(&mut LoanAggregate) -> Fut,
-        Fut: Future<Output = Result<R, FineractError>>,
+        F: FnOnce(&mut LoanAggregate) -> Result<R, FineractError>,
     {
         if self.lock_manager.is_locked_by_chunk_processing(loan_id) {
             return Err(FineractError::Conflict(
@@ -2504,7 +2503,7 @@ impl InlineLoanCobExecutor {
         })?;
 
         let report = self.execute_inline_cob(&mut loan, current_cob_date).await?;
-        let output = command_fn(&mut loan).await?;
+        let output = command_fn(&mut loan)?;
         self.loan_store.upsert_loan(loan);
         Ok((report, output))
     }
@@ -3005,7 +3004,7 @@ mod tests {
         // Incoming write command arrives when current_cob_date is 2026-03-05 (4 days behind: Mar 2, 3, 4, 5)
         let target_cob_date = ymd(2026, 3, 5);
         let (report, command_result) = inline_executor
-            .intercept_write_command(1001, target_cob_date, |updated_loan| async move {
+            .intercept_write_command(1001, target_cob_date, |updated_loan| {
                 Ok(updated_loan.total_outstanding())
             })
             .await
@@ -3097,7 +3096,7 @@ mod tests {
 
         // Incoming write command intercepted by InlineLoanCobExecutor must return 409 Conflict
         let err = inline_executor
-            .intercept_write_command(42, cob_date, |_l| async move { Ok(()) })
+            .intercept_write_command(42, cob_date, |_l| Ok(()))
             .await
             .expect_err("must fail with 409 Conflict when locked by chunk processing");
 

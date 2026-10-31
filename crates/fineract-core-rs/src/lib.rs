@@ -22,3 +22,7 @@ pub use context::*;
 pub use db::*;
 pub use json_command::*;
 pub use primitives::*;
+
+pub use fineract_validation_rs::{
+    ApiGlobalErrorResponse, FineractError, FineractResult, PlatformDomainRuleException,
+};

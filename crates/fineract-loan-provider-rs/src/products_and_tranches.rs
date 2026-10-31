@@ -27,7 +27,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use chrono::{Days, Months, NaiveDate};
-pub use fineract_accounting_rs::gl_and_rules::AccountingRuleType;
+pub use fineract_accounting_rs::AccountingRuleType;
 use fineract_charge_rs::EnumOptionData;
 use fineract_loan_rs::schedule_and_terms::LoanRepaymentScheduleInstallment;
 use fineract_money::{FineractRoundingMode, MonetaryCurrency, Money};
@@ -748,7 +748,7 @@ impl LoanProduct {
     /// Returns the product's [`MonetaryCurrency`].
     #[inline]
     pub fn currency(&self) -> MonetaryCurrency {
-        MonetaryCurrency::new(&self.currency_code, self.digits_after_decimal, None)
+        MonetaryCurrency::new(&self.currency_code, self.digits_after_decimal.max(0) as u32, None)
     }
 
     /// Sets `[min_principal, default_principal, max_principal]`.
@@ -898,7 +898,7 @@ impl LoanProduct {
             b.reset()
                 .parameter("principal")
                 .value(self.default_principal)
-                .in_min_max_range(self.min_principal, self.max_principal)
+                .in_min_and_max_amount_range(self.min_principal, self.max_principal)
         } else {
             b
         };
@@ -940,7 +940,7 @@ impl LoanProduct {
             b.reset()
                 .parameter("interestRatePerPeriod")
                 .value(self.default_nominal_interest_rate)
-                .in_min_max_range(
+                .in_min_and_max_amount_range(
                     self.min_nominal_interest_rate,
                     self.max_nominal_interest_rate,
                 )
@@ -1159,7 +1159,7 @@ impl LoanProduct {
                         .reset()
                         .parameter("disbursedAmountPercentageForDownPayment")
                         .value(pct)
-                        .in_min_max_range(Decimal::ONE, Decimal::from(100));
+                        .in_min_and_max_amount_range(Decimal::ONE, Decimal::from(100));
                     if pct.scale() > 6 {
                         b.reset()
                             .parameter("disbursedAmountPercentageForDownPayment")
@@ -1195,7 +1195,7 @@ impl LoanProduct {
             }
         };
 
-        b.into_result()
+        b.finish()
     }
 
     /// Validates that a loan application's proposed `principal`, `nominal_interest_rate`, and
@@ -1212,13 +1212,13 @@ impl LoanProduct {
             .reset()
             .parameter("principal")
             .value(principal)
-            .in_min_max_range(self.min_principal, self.max_principal);
+            .in_min_and_max_amount_range(self.min_principal, self.max_principal);
 
         let b = b
             .reset()
             .parameter("interestRatePerPeriod")
             .value(nominal_interest_rate)
-            .in_min_max_range(
+            .in_min_and_max_amount_range(
                 self.min_nominal_interest_rate,
                 self.max_nominal_interest_rate,
             );
@@ -1232,7 +1232,7 @@ impl LoanProduct {
                 i64::from(self.max_number_of_repayments),
             );
 
-        b.into_result()
+        b.finish()
     }
 
     /// Calculates the down-payment portion for a disbursed amount when `enable_down_payment` is active.
@@ -1244,7 +1244,7 @@ impl LoanProduct {
             return Decimal::ZERO;
         };
         let raw = (disbursed_amount * pct) / Decimal::from(100);
-        Money::of(self.currency(), raw).amount()
+        Money::of(self.currency(), raw, FineractRoundingMode::HalfEven).amount()
     }
 }
 
@@ -1393,7 +1393,7 @@ impl MultiTrancheDisbursementEngine {
                     "not.supported.for.single.disburse.loan",
                     "Multi-tranche disbursement data is only allowed for multi-disburse loan products.",
                 );
-            return Err(FineractError::Validation(b.finish().unwrap_err()));
+            return Err(FineractError::DataValidation(b.finish().unwrap_err()));
         }
 
         if let Some(max_tranches) = product.max_tranche_count {
@@ -1404,12 +1404,12 @@ impl MultiTrancheDisbursementEngine {
                     .value(i64::try_from(tranches.len()).unwrap_or(i64::MAX))
                     .fail_with_code(
                         "exceeding.max.tranche.count",
-                        format!(
+                        &format!(
                             "Number of disbursement tranches ({}) exceeds product maxTrancheCount ({max_tranches}).",
                             tranches.len()
                         ),
                     );
-                return Err(FineractError::Validation(b.finish().unwrap_err()));
+                return Err(FineractError::DataValidation(b.finish().unwrap_err()));
             }
         }
 
@@ -1424,7 +1424,7 @@ impl MultiTrancheDisbursementEngine {
                     .parameter("principal")
                     .value(tranche.principal)
                     .positive_amount();
-                return Err(FineractError::Validation(b.finish().unwrap_err()));
+                return Err(FineractError::DataValidation(b.finish().unwrap_err()));
             }
             if idx > 0
                 && tranche.expected_disbursement_date < tranches[idx - 1].expected_disbursement_date
@@ -1437,7 +1437,7 @@ impl MultiTrancheDisbursementEngine {
                         "cannot.be.before.previous.tranche.date",
                         "Tranche expected disbursement date cannot be before the previous tranche expected disbursement date.",
                     );
-                return Err(FineractError::Validation(b.finish().unwrap_err()));
+                return Err(FineractError::DataValidation(b.finish().unwrap_err()));
             }
 
             total_tranche_principal += tranche.principal;
@@ -1761,7 +1761,7 @@ impl LoanRescheduleEngine {
                     "variation.required",
                     "At least one reschedule variation (adjustedDueDate, extraTerms, graceOnPrincipal, graceOnInterest, or newInterestRate) must be provided.",
                 );
-            return Err(FineractError::Validation(b.finish().unwrap_err()));
+            return Err(FineractError::DataValidation(b.finish().unwrap_err()));
         }
 
         if let Some(new_rate) = request.new_interest_rate {
@@ -1771,7 +1771,7 @@ impl LoanRescheduleEngine {
                     .parameter("newInterestRate")
                     .value(new_rate)
                     .zero_or_positive_amount();
-                return Err(FineractError::Validation(b.finish().unwrap_err()));
+                return Err(FineractError::DataValidation(b.finish().unwrap_err()));
             }
         }
 
@@ -1824,7 +1824,7 @@ impl LoanRescheduleEngine {
                             "cannot.be.on.or.before.period.from.date",
                             "Adjusted due date must be strictly after the installment period start date.",
                         );
-                    return Err(FineractError::Validation(b.finish().unwrap_err()));
+                    return Err(FineractError::DataValidation(b.finish().unwrap_err()));
                 }
             }
             if start_idx > 0 && adjusted_due <= installments[start_idx - 1].due_date {
@@ -1836,7 +1836,7 @@ impl LoanRescheduleEngine {
                         "cannot.be.on.or.before.previous.installment.due.date",
                         "Adjusted due date must be strictly after the previous installment's due date.",
                     );
-                return Err(FineractError::Validation(b.finish().unwrap_err()));
+                return Err(FineractError::DataValidation(b.finish().unwrap_err()));
             }
         }
 
@@ -1918,7 +1918,7 @@ impl LoanRescheduleEngine {
             amortizing_terms,
             config.amortization_method,
             config.interest_method,
-            config.currency,
+            config.currency.clone(),
         );
 
         let loan_id = future_slice[0].loan_id.or(Some(request.loan_id));
@@ -1966,7 +1966,7 @@ impl LoanRescheduleEngine {
                     }
                 }
             };
-            let period_interest = Money::of(config.currency, raw_interest).amount();
+            let period_interest = Money::of(config.currency.clone(), raw_interest, FineractRoundingMode::HalfEven).amount();
 
             // Calculate principal for this period
             let period_principal = if is_principal_grace {
@@ -1978,13 +1978,13 @@ impl LoanRescheduleEngine {
                     AmortizationMethod::EqualPrincipal => {
                         let raw_p =
                             remaining_unpaid_principal / Decimal::from(amortizing_terms);
-                        Money::of(config.currency, raw_p)
+                        Money::of(config.currency.clone(), raw_p, FineractRoundingMode::HalfEven)
                             .amount()
                             .min(balance_remaining)
                     }
                     AmortizationMethod::EqualInstallments | AmortizationMethod::Invalid => {
                         let raw_p = (recalculated_emi - period_interest).max(Decimal::ZERO);
-                        Money::of(config.currency, raw_p)
+                        Money::of(config.currency.clone(), raw_p, FineractRoundingMode::HalfEven)
                             .amount()
                             .min(balance_remaining)
                     }
@@ -2066,12 +2066,12 @@ impl LoanRescheduleEngine {
             return Decimal::ZERO;
         }
         if periodic_rate <= Decimal::ZERO {
-            return Money::of(currency, principal / n_dec).amount();
+            return Money::of(currency, principal / n_dec, FineractRoundingMode::HalfEven).amount();
         }
         if interest_method.is_flat() || amortization_method.is_equal_principal() {
             let p_part = principal / n_dec;
             let i_part = principal * periodic_rate;
-            return Money::of(currency, p_part + i_part).amount();
+            return Money::of(currency, p_part + i_part, FineractRoundingMode::HalfEven).amount();
         }
 
         // Declining-balance Equal Installments: P * r * (1 + r)^n / ((1 + r)^n - 1)
@@ -2080,15 +2080,15 @@ impl LoanRescheduleEngine {
         for _ in 0..n {
             pow_factor = (pow_factor * one_plus_r).round_dp_with_strategy(
                 12,
-                FineractRoundingMode::HalfEven.to_decimal_strategy(),
+                FineractRoundingMode::HalfEven.to_rounding_strategy(),
             );
         }
         let denominator = pow_factor - Decimal::ONE;
         if denominator <= Decimal::ZERO {
-            return Money::of(currency, principal / n_dec).amount();
+            return Money::of(currency, principal / n_dec, FineractRoundingMode::HalfEven).amount();
         }
         let raw_emi = (principal * periodic_rate * pow_factor) / denominator;
-        Money::of(currency, raw_emi).amount()
+        Money::of(currency, raw_emi, FineractRoundingMode::HalfEven).amount()
     }
 }
 
@@ -2601,7 +2601,6 @@ impl GuarantorHoldEngine {
                     )
                     .map_err(FineractError::DomainRule)?;
 
-                savings.on_hold_funds += fd.amount;
                 fd.hold_transaction_id = hold_tx.id;
                 fd.amount_remaining_derived = fd.amount;
                 fd.amount_released_derived = Decimal::ZERO;
@@ -2657,7 +2656,7 @@ impl GuarantorHoldEngine {
                 total_remaining_before
             } else {
                 let raw_share = (principal_paid * total_guaranteed) / loan_principal;
-                Money::of(currency, raw_share)
+                Money::of(currency, raw_share, FineractRoundingMode::HalfEven)
                     .amount()
                     .min(total_remaining_before)
             };
@@ -2679,8 +2678,6 @@ impl GuarantorHoldEngine {
                     amount_to_release -= released;
 
                     if let Some(savings) = savings_accounts.get_mut(&fd.savings_account_id) {
-                        savings.on_hold_funds =
-                            (savings.on_hold_funds - released).max(Decimal::ZERO);
                         // If the funding detail is now completely released and has an underlying hold tx,
                         // release it on the savings account; otherwise reduce savings_amount_on_hold proportionally.
                         if fd.amount_remaining_derived == Decimal::ZERO {
@@ -2976,7 +2973,7 @@ mod tests {
             Some(10),
             None,
             1,
-            currency,
+            currency.clone(),
             dec!(5.0),
             d(2026, 1, 1),
         );
@@ -2992,7 +2989,7 @@ mod tests {
             Some(20),
             None,
             1,
-            currency,
+            currency.clone(),
             dec!(5.0),
             d(2026, 1, 1),
         );
@@ -3053,7 +3050,7 @@ mod tests {
             dec!(400.00),
             dec!(600.00),
             10,
-            currency,
+            currency.clone(),
             &mut guarantors,
             &mut savings_map,
             d(2026, 2, 5),
@@ -3079,7 +3076,7 @@ mod tests {
             dec!(600.00),
             Decimal::ZERO,
             10,
-            currency,
+            currency.clone(),
             &mut guarantors,
             &mut savings_map,
             d(2026, 3, 5),

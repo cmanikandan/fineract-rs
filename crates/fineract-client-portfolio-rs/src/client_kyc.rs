@@ -1,3 +1,5 @@
+
+
 //! Client KYC, Identifiers, Family Members, and Address domain models, state machine,
 //! Dual-DB repository (`m_client`, `m_client_non_person`, `m_client_identifier`,
 //! `m_address`, `m_client_address`, `m_family_members`), and command handlers.
@@ -9,6 +11,11 @@
 //! - `org.apache.fineract.portfolio.address.domain.Address`
 //! - `org.apache.fineract.portfolio.address.service.AddressWritePlatformServiceImpl`
 //! - `org.apache.fineract.portfolio.transfer.service.TransferWritePlatformServiceJpaRepositoryImpl`
+
+fn parse_date_str(s: &str) -> Option<NaiveDate> {
+    let part = s.split(|c: char| c == ' ' || c == 'T').next().unwrap_or(s);
+    NaiveDate::parse_from_str(part, "%Y-%m-%d").ok()
+}
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -2588,11 +2595,13 @@ impl DualDbClientRepository {
                     .try_get("sub_status")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let activation_date: Option<NaiveDate> = row
-                    .try_get("activation_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("activation_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let office_joining_date: Option<NaiveDate> = row
-                    .try_get("office_joining_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("office_joining_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let office_id: i64 = row
                     .try_get("office_id")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2624,8 +2633,9 @@ impl DualDbClientRepository {
                     .try_get("email_address")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let date_of_birth: Option<NaiveDate> = row
-                    .try_get("date_of_birth")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("date_of_birth")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let gender_cv_id: Option<i64> = row
                     .try_get("gender_cv_id")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2639,35 +2649,42 @@ impl DualDbClientRepository {
                     .try_get("legal_form_enum")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let submitted_on_date: Option<NaiveDate> = row
-                    .try_get("submittedon_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("submittedon_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let closed_on_date: Option<NaiveDate> = row
-                    .try_get("closedon_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("closedon_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let closure_reason_cv_id: Option<i64> = row
                     .try_get("closure_reason_cv_id")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let rejected_on_date: Option<NaiveDate> = row
-                    .try_get("rejectedon_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("rejectedon_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let reject_reason_cv_id: Option<i64> = row
                     .try_get("reject_reason_cv_id")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let withdrawn_on_date: Option<NaiveDate> = row
-                    .try_get("withdrawn_on_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("withdrawn_on_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let withdraw_reason_cv_id: Option<i64> = row
                     .try_get("withdraw_reason_cv_id")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
                 let reactivated_on_date: Option<NaiveDate> = row
-                    .try_get("reactivated_on_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("reactivated_on_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let reopened_on_date: Option<NaiveDate> = row
-                    .try_get("reopened_on_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("reopened_on_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let proposed_transfer_date: Option<NaiveDate> = row
-                    .try_get("proposed_transfer_date")
-                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    .try_get::<Option<String>, _>("proposed_transfer_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+                    .and_then(|s| parse_date_str(&s));
                 let savings_product_id: Option<i64> = row
                     .try_get("default_savings_product")
                     .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2768,8 +2785,8 @@ impl DualDbClientRepository {
                 .bind(client.external_id.value())
                 .bind(client.status.as_i32())
                 .bind(client.sub_status)
-                .bind(client.activation_date)
-                .bind(client.office_joining_date)
+                .bind(client.activation_date.map(|d| d.to_string()))
+                .bind(client.office_joining_date.map(|d| d.to_string()))
                 .bind(client.office_id)
                 .bind(client.transfer_to_office_id)
                 .bind(client.staff_id)
@@ -2780,21 +2797,21 @@ impl DualDbClientRepository {
                 .bind(&client.display_name)
                 .bind(&client.mobile_no)
                 .bind(&client.email_address)
-                .bind(client.date_of_birth)
+                .bind(client.date_of_birth.map(|d| d.to_string()))
                 .bind(client.gender_cv_id)
                 .bind(client.client_type_cv_id)
                 .bind(client.client_classification_cv_id)
                 .bind(client.legal_form.as_i32())
-                .bind(client.submitted_on_date)
-                .bind(client.closed_on_date)
+                .bind(client.submitted_on_date.map(|d| d.to_string()))
+                .bind(client.closed_on_date.map(|d| d.to_string()))
                 .bind(client.closure_reason_cv_id)
-                .bind(client.rejected_on_date)
+                .bind(client.rejected_on_date.map(|d| d.to_string()))
                 .bind(client.reject_reason_cv_id)
-                .bind(client.withdrawn_on_date)
+                .bind(client.withdrawn_on_date.map(|d| d.to_string()))
                 .bind(client.withdraw_reason_cv_id)
-                .bind(client.reactivated_on_date)
-                .bind(client.reopened_on_date)
-                .bind(client.proposed_transfer_date)
+                .bind(client.reactivated_on_date.map(|d| d.to_string()))
+                .bind(client.reopened_on_date.map(|d| d.to_string()))
+                .bind(client.proposed_transfer_date.map(|d| d.to_string()))
                 .bind(client.savings_product_id)
                 .bind(client.savings_account_id)
                 .bind(client.is_staff)
@@ -2825,8 +2842,8 @@ impl DualDbClientRepository {
                 .bind(client.external_id.value())
                 .bind(client.status.as_i32())
                 .bind(client.sub_status)
-                .bind(client.activation_date)
-                .bind(client.office_joining_date)
+                .bind(client.activation_date.map(|d| d.to_string()))
+                .bind(client.office_joining_date.map(|d| d.to_string()))
                 .bind(client.office_id)
                 .bind(client.transfer_to_office_id)
                 .bind(client.staff_id)
@@ -2837,21 +2854,21 @@ impl DualDbClientRepository {
                 .bind(&client.display_name)
                 .bind(&client.mobile_no)
                 .bind(&client.email_address)
-                .bind(client.date_of_birth)
+                .bind(client.date_of_birth.map(|d| d.to_string()))
                 .bind(client.gender_cv_id)
                 .bind(client.client_type_cv_id)
                 .bind(client.client_classification_cv_id)
                 .bind(client.legal_form.as_i32())
-                .bind(client.submitted_on_date)
-                .bind(client.closed_on_date)
+                .bind(client.submitted_on_date.map(|d| d.to_string()))
+                .bind(client.closed_on_date.map(|d| d.to_string()))
                 .bind(client.closure_reason_cv_id)
-                .bind(client.rejected_on_date)
+                .bind(client.rejected_on_date.map(|d| d.to_string()))
                 .bind(client.reject_reason_cv_id)
-                .bind(client.withdrawn_on_date)
+                .bind(client.withdrawn_on_date.map(|d| d.to_string()))
                 .bind(client.withdraw_reason_cv_id)
-                .bind(client.reactivated_on_date)
-                .bind(client.reopened_on_date)
-                .bind(client.proposed_transfer_date)
+                .bind(client.reactivated_on_date.map(|d| d.to_string()))
+                .bind(client.reopened_on_date.map(|d| d.to_string()))
+                .bind(client.proposed_transfer_date.map(|d| d.to_string()))
                 .bind(client.savings_product_id)
                 .bind(client.savings_account_id)
                 .bind(client.is_staff)
@@ -2935,7 +2952,7 @@ impl DualDbClientRepository {
                 .bind(non_person.client_id)
                 .bind(non_person.constitution_cv_id)
                 .bind(&non_person.incorp_no)
-                .bind(non_person.incorp_validity_till)
+                .bind(non_person.incorp_validity_till.map(|d| d.to_string()))
                 .bind(non_person.main_business_line_cv_id)
                 .bind(&non_person.remarks)
                 .execute(pool)
@@ -3002,8 +3019,8 @@ impl DualDbClientRepository {
                 .bind(&identifier.document_key)
                 .bind(identifier.status.as_i32())
                 .bind(&identifier.description)
-                .bind(identifier.issuance_date)
-                .bind(identifier.expiry_date)
+                .bind(identifier.issuance_date.map(|d| d.to_string()))
+                .bind(identifier.expiry_date.map(|d| d.to_string()))
                 .bind(identifier.active)
                 .execute(pool)
                 .await
@@ -3039,8 +3056,8 @@ impl DualDbClientRepository {
                 .bind(&identifier.document_key)
                 .bind(identifier.status.as_i32())
                 .bind(&identifier.description)
-                .bind(identifier.issuance_date)
-                .bind(identifier.expiry_date)
+                .bind(identifier.issuance_date.map(|d| d.to_string()))
+                .bind(identifier.expiry_date.map(|d| d.to_string()))
                 .bind(identifier.active)
                 .bind(identifier.id)
                 .execute(pool)
@@ -3116,9 +3133,9 @@ impl DualDbClientRepository {
                 .bind(address.latitude.map(|d| d.to_string()))
                 .bind(address.longitude.map(|d| d.to_string()))
                 .bind(&address.created_by)
-                .bind(address.created_on)
+                .bind(address.created_on.map(|d| d.to_string()))
                 .bind(&address.updated_by)
-                .bind(address.updated_on)
+                .bind(address.updated_on.map(|d| d.to_string()))
                 .execute(pool)
                 .await
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -3205,7 +3222,7 @@ impl DualDbClientRepository {
                 .bind(member.marital_status_cv_id)
                 .bind(member.gender_cv_id)
                 .bind(member.profession_cv_id)
-                .bind(member.date_of_birth)
+                .bind(member.date_of_birth.map(|d| d.to_string()))
                 .execute(pool)
                 .await
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?;

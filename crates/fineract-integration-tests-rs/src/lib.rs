@@ -21,9 +21,9 @@ use serde_json::json;
 
 use fineract_batch_api_rs::{BatchHeader, BatchRequestItem};
 use fineract_client_rs::FineractClient;
-use fineract_core_rs::{BusinessDateType, DatabaseDialect, DialectSql};
+use fineract_core_rs::{BusinessDateType, DialectSql, SqlDialect};
 use fineract_loan_rs::LoanStatus;
-use fineract_money::{MathContext, MonetaryCurrency, Money, RoundingMode};
+use fineract_money::{FineractRoundingMode, MonetaryCurrency, Money};
 use fineract_outbox_rs::OutboxEventStatus;
 
 /// Summary report returned by running the full Fineract Cross-Domain Integration Suite.
@@ -47,8 +47,8 @@ pub async fn run_all_cross_domain_verifications() -> Result<IntegrationSuiteRepo
     let sample_sql = "SELECT id, account_no FROM m_loan WHERE client_id = ? AND status_enum = ? AND "
         .to_string()
         + "disbursedon_date >= ?";
-    let pg_sql = DialectSql::rewrite_placeholders(&sample_sql, DatabaseDialect::Postgres);
-    let mysql_sql = DialectSql::rewrite_placeholders(&sample_sql, DatabaseDialect::MySql);
+    let pg_sql = DialectSql::rewrite_placeholders(&sample_sql, SqlDialect::Postgres);
+    let mysql_sql = DialectSql::rewrite_placeholders(&sample_sql, SqlDialect::MySql);
     let dialect_ok = pg_sql.contains("$1")
         && pg_sql.contains("$2")
         && pg_sql.contains("$3")
@@ -61,10 +61,9 @@ pub async fn run_all_cross_domain_verifications() -> Result<IntegrationSuiteRepo
 
     // 2. Verify Fixed-Point Money Arithmetic (`HALF_EVEN` vs `HALF_UP` & Step-Wise Allocation)
     let usd = MonetaryCurrency::new("USD", 2, Some(0));
-    let mc = MathContext::new(RoundingMode::HalfEven);
-    let m1 = Money::of(&usd, dec!(100.005), mc);
-    let m2 = Money::of(&usd, dec!(249.995), mc);
-    let sum = m1.plus(&m2, mc).map_err(|e| e.to_string())?;
+    let m1 = Money::of(usd.clone(), dec!(100.005), FineractRoundingMode::HalfEven);
+    let m2 = Money::of(usd, dec!(249.995), FineractRoundingMode::HalfEven);
+    let sum = m1.plus(&m2).map_err(|e| e.to_string())?;
     let money_ok = sum.amount() == dec!(350.00);
     if !money_ok {
         return Err(format!("Money HalfEven check failed: got {}", sum.amount()));
@@ -148,12 +147,12 @@ pub async fn run_all_cross_domain_verifications() -> Result<IntegrationSuiteRepo
         .await
         .map_err(|e| e.to_string())?;
     let lifecycle_ok = loan.status == LoanStatus::Active
-        && loan.summary.principal_outstanding == dec!(850.00)
+        && loan.summary.total_principal_outstanding == dec!(850.00)
         && loan.transactions.len() == 3;
     if !lifecycle_ok {
         return Err(format!(
             "Loan lifecycle/chargeback mismatch: status={:?}, outstanding={}",
-            loan.status, loan.summary.principal_outstanding
+            loan.status, loan.summary.total_principal_outstanding
         ));
     }
     passed += 1;
@@ -212,7 +211,7 @@ pub async fn run_all_cross_domain_verifications() -> Result<IntegrationSuiteRepo
         .app_state
         .outbox_relay
         .relay_next_batch(|ev| {
-            assert_eq!(ev.aggregate_root_id, loan_id);
+            assert_eq!(ev.aggregate_root_id, Some(loan_id));
             Ok(())
         })
         .map_err(|e| e.to_string())?;

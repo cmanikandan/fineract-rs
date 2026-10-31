@@ -349,6 +349,16 @@ impl Default for ExecutionContext {
 }
 
 impl ExecutionContext {
+    /// Creates a system execution context for a tenant.
+    pub fn system(tenant_id: impl Into<String>) -> Self {
+        Self::default_for_tenant(tenant_id)
+    }
+
+    /// Creates an execution context for a tenant with a default business date.
+    pub fn default_for_tenant(tenant_id: impl Into<String>) -> Self {
+        Self::new(tenant_id.into(), chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap())
+    }
+
     /// Creates an [`ExecutionContext`] for a given `tenant_id` and active `business_date`.
     pub fn new(tenant_id: impl Into<String>, business_date: NaiveDate) -> Self {
         let tenant_id = tenant_id.into();
@@ -383,6 +393,12 @@ impl ExecutionContext {
     /// Ergonomic alias for [`ExecutionContext::get_business_date`].
     pub fn business_date(&self) -> NaiveDate {
         self.get_business_date()
+    }
+
+    /// Ergonomic alias for COB business date.
+    pub fn cob_date(&self) -> NaiveDate {
+        self.business_date_by_type(BusinessDateType::CobDate)
+            .unwrap_or_else(|| self.business_date())
     }
 
     /// Returns the business date for a specific [`BusinessDateType`],
@@ -586,5 +602,52 @@ mod tests {
             ),
             "jdbc:postgresql://db.internal:5432/fineract_default?sslmode=disable"
         );
+    }
+}
+
+/// Type alias matching `FineractPlatformContext` to `ExecutionContext`.
+pub type FineractPlatformContext = ExecutionContext;
+
+/// Type alias matching `FineractTenant` to `FineractPlatformTenant`.
+pub type FineractTenant = FineractPlatformTenant;
+
+/// Idempotency key wrapper.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub struct IdempotencyKey(pub String);
+
+impl IdempotencyKey {
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for IdempotencyKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for IdempotencyKey {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
+impl From<&str> for IdempotencyKey {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+/// Tenant database pool registry.
+#[derive(Debug, Default, Clone)]
+pub struct TenantDatabasePoolRegistry;
+
+impl TenantDatabasePoolRegistry {
+    pub fn new() -> Self {
+        Self
     }
 }

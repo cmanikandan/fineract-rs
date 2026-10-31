@@ -2342,6 +2342,18 @@ impl DualDbTellerRepository {
     // Row Mapping Helpers
     // -------------------------------------------------------------------------
 
+    fn parse_date_str(s: &str) -> Option<NaiveDate> {
+    let part = s.split(|c: char| c == ' ' || c == 'T').next().unwrap_or(s);
+    NaiveDate::parse_from_str(part, "%Y-%m-%d").ok()
+}
+
+fn parse_datetime_str(s: &str) -> Option<NaiveDateTime> {
+        NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S"))
+            .ok()
+            .or_else(|| Self::parse_date_str(s).map(|d| d.and_hms_opt(0, 0, 0).unwrap_or_default()))
+    }
+
     fn map_teller_row(row: &sqlx::any::AnyRow) -> FineractResult<Teller> {
         let id: i64 = row
             .try_get("id")
@@ -2361,12 +2373,15 @@ impl DualDbTellerRepository {
         let description: Option<String> = row
             .try_get("description")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let start_date: NaiveDate = row
+        let start_date_str: String = row
             .try_get("valid_from")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+        let start_date = Self::parse_date_str(&start_date_str)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
         let end_date: Option<NaiveDate> = row
-            .try_get("valid_to")
-            .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+            .try_get::<Option<String>, _>("valid_to")
+            .map_err(|e| FineractError::DatabaseError(e.to_string()))?
+            .and_then(|s| Self::parse_date_str(&s));
         let state: i16 = row
             .try_get("state")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2398,12 +2413,16 @@ impl DualDbTellerRepository {
         let description: Option<String> = row
             .try_get("description")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let start_date: NaiveDate = row
+        let start_date_str: String = row
             .try_get("start_date")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let end_date: NaiveDate = row
+        let start_date = Self::parse_date_str(&start_date_str)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+        let end_date_str: String = row
             .try_get("end_date")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+        let end_date = Self::parse_date_str(&end_date_str)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
         let start_time: Option<String> = row
             .try_get("start_time")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2443,12 +2462,16 @@ impl DualDbTellerRepository {
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
         let txn_amount = Decimal::from_str(&amount_str)
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let txn_date: NaiveDate = row
+        let txn_date_str: String = row
             .try_get("txn_date")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let created_naive: NaiveDateTime = row
+        let txn_date = Self::parse_date_str(&txn_date_str)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap());
+        let created_naive_str: String = row
             .try_get("created_date")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+        let created_naive = Self::parse_datetime_str(&created_naive_str)
+            .unwrap_or_else(|| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap());
         let entity_type: Option<String> = row
             .try_get("entity_type")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2562,8 +2585,8 @@ impl DualDbTellerRepository {
                     .bind(teller.credit_account_id)
                     .bind(&teller.name)
                     .bind(&teller.description)
-                    .bind(teller.start_date)
-                    .bind(teller.end_date)
+                    .bind(teller.start_date.to_string())
+                    .bind(teller.end_date.map(|d| d.to_string()))
                     .bind(teller.status.as_i16())
                     .execute(pool)
                     .await
@@ -2574,8 +2597,8 @@ impl DualDbTellerRepository {
                     .bind(teller.credit_account_id)
                     .bind(&teller.name)
                     .bind(&teller.description)
-                    .bind(teller.start_date)
-                    .bind(teller.end_date)
+                    .bind(teller.start_date.to_string())
+                    .bind(teller.end_date.map(|d| d.to_string()))
                     .bind(teller.status.as_i16())
                     .bind(teller.id)
                     .execute(pool)
@@ -2682,8 +2705,8 @@ impl DualDbTellerRepository {
             let sql = Self::select_overlapping_cashiers_of_staff_sql(self.dialect);
             let rows = sqlx::query(&sql)
                 .bind(staff_id)
-                .bind(to_date)
-                .bind(from_date)
+                .bind(to_date.to_string())
+                .bind(from_date.to_string())
                 .fetch_all(pool)
                 .await
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2727,8 +2750,8 @@ impl DualDbTellerRepository {
                     .bind(cashier.staff_id)
                     .bind(cashier.teller_id)
                     .bind(&cashier.description)
-                    .bind(cashier.start_date)
-                    .bind(cashier.end_date)
+                    .bind(cashier.start_date.to_string())
+                    .bind(cashier.end_date.to_string())
                     .bind(&cashier.start_time)
                     .bind(&cashier.end_time)
                     .bind(cashier.is_full_day)
@@ -2741,8 +2764,8 @@ impl DualDbTellerRepository {
                     .bind(cashier.staff_id)
                     .bind(cashier.teller_id)
                     .bind(&cashier.description)
-                    .bind(cashier.start_date)
-                    .bind(cashier.end_date)
+                    .bind(cashier.start_date.to_string())
+                    .bind(cashier.end_date.to_string())
                     .bind(&cashier.start_time)
                     .bind(&cashier.end_time)
                     .bind(cashier.is_full_day)
@@ -2895,8 +2918,8 @@ impl DualDbTellerRepository {
                 .bind(txn.cashier_id)
                 .bind(txn.txn_type.as_i16())
                 .bind(txn.txn_amount.to_string())
-                .bind(txn.txn_date)
-                .bind(txn.created_date.naive_utc())
+                .bind(txn.txn_date.to_string())
+                .bind(txn.created_date.naive_utc().to_string())
                 .bind(&txn.entity_type)
                 .bind(txn.entity_id)
                 .bind(&txn.txn_note)

@@ -2931,7 +2931,7 @@ impl DualDbAccountTransferRepository {
         DialectSql::rewrite_placeholders(
             "INSERT INTO m_portfolio_account_associations \
              (id, loan_account_id, savings_account_id, linked_loan_account_id, linked_savings_account_id, association_type_enum, is_active) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
             dialect,
         )
     }
@@ -2939,7 +2939,7 @@ impl DualDbAccountTransferRepository {
     pub fn select_association_by_id_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
             &format!(
-                "SELECT {} FROM m_portfolio_account_associations WHERE id = $1",
+                "SELECT {} FROM m_portfolio_account_associations WHERE id = ?",
                 Self::ASSOCIATIONS_COLUMNS
             ),
             dialect,
@@ -2951,7 +2951,7 @@ impl DualDbAccountTransferRepository {
             "INSERT INTO m_account_transfer_details \
              (id, from_office_id, to_office_id, from_client_id, to_client_id, \
               from_savings_account_id, to_savings_account_id, from_loan_account_id, to_loan_account_id, transfer_type) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             dialect,
         )
     }
@@ -2959,7 +2959,7 @@ impl DualDbAccountTransferRepository {
     pub fn select_transfer_details_by_id_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
             &format!(
-                "SELECT {} FROM m_account_transfer_details WHERE id = $1",
+                "SELECT {} FROM m_account_transfer_details WHERE id = ?",
                 Self::TRANSFER_DETAILS_COLUMNS
             ),
             dialect,
@@ -2972,7 +2972,7 @@ impl DualDbAccountTransferRepository {
              (id, account_transfer_details_id, from_savings_transaction_id, to_savings_transaction_id, \
               to_loan_transaction_id, from_loan_transaction_id, is_reversed, transaction_date, \
               currency_code, currency_digits, amount, description) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 2, $10, $11)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?)",
             dialect,
         )
     }
@@ -2980,7 +2980,7 @@ impl DualDbAccountTransferRepository {
     pub fn select_transfer_transaction_by_id_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
             &format!(
-                "SELECT {} FROM m_account_transfer_transaction WHERE id = $1",
+                "SELECT {} FROM m_account_transfer_transaction WHERE id = ?",
                 Self::TRANSFER_TRANSACTION_COLUMNS
             ),
             dialect,
@@ -2989,7 +2989,7 @@ impl DualDbAccountTransferRepository {
 
     pub fn reverse_transfer_transaction_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
-            "UPDATE m_account_transfer_transaction SET is_reversed = $1 WHERE id = $2",
+            "UPDATE m_account_transfer_transaction SET is_reversed = ? WHERE id = ?",
             dialect,
         )
     }
@@ -3000,7 +3000,7 @@ impl DualDbAccountTransferRepository {
              (id, name, account_transfer_details_id, priority, instruction_type, status, amount, \
               valid_from, valid_till, recurrence_type, recurrence_frequency, recurrence_interval, \
               recurrence_on_month, recurrence_on_day, last_run_date) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             dialect,
         )
     }
@@ -3012,7 +3012,7 @@ impl DualDbAccountTransferRepository {
                  valid_from = $6, valid_till = $7, recurrence_type = $8, recurrence_frequency = $9, \
                  recurrence_interval = $10, recurrence_on_month = $11, recurrence_on_day = $12, \
                  last_run_date = $13 \
-             WHERE id = $14",
+             WHERE id = ?4",
             dialect,
         )
     }
@@ -3020,7 +3020,7 @@ impl DualDbAccountTransferRepository {
     pub fn select_standing_instruction_by_id_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
             &format!(
-                "SELECT {} FROM m_account_transfer_standing_instructions WHERE id = $1",
+                "SELECT {} FROM m_account_transfer_standing_instructions WHERE id = ?",
                 Self::STANDING_INSTRUCTION_COLUMNS
             ),
             dialect,
@@ -3031,7 +3031,7 @@ impl DualDbAccountTransferRepository {
         DialectSql::rewrite_placeholders(
             "INSERT INTO m_account_transfer_standing_instructions_history \
              (id, standing_instruction_id, status, execution_time, amount, error_log) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+             VALUES (?, ?, ?, ?, ?, ?)",
             dialect,
         )
     }
@@ -3039,7 +3039,7 @@ impl DualDbAccountTransferRepository {
     pub fn select_standing_instruction_history_sql(dialect: SqlDialect) -> String {
         DialectSql::rewrite_placeholders(
             &format!(
-                "SELECT {} FROM m_account_transfer_standing_instructions_history WHERE standing_instruction_id = $1 ORDER BY id ASC",
+                "SELECT {} FROM m_account_transfer_standing_instructions_history WHERE standing_instruction_id = ? ORDER BY id ASC",
                 Self::STANDING_INSTRUCTION_HISTORY_COLUMNS
             ),
             dialect,

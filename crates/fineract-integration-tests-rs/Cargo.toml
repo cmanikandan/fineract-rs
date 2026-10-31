@@ -8,6 +8,11 @@ description = "Comprehensive Integration Test Suite ported from upstream integra
 [dependencies]
 fineract-server-rs = { workspace = true }
 fineract-client-rs = { workspace = true }
+fineract-batch-api-rs = { workspace = true }
+fineract-core-rs = { workspace = true }
+fineract-loan-rs = { workspace = true }
+fineract-money = { workspace = true }
+fineract-outbox-rs = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }
 sqlx = { workspace = true }

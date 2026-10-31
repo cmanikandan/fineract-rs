@@ -6,6 +6,7 @@ license.workspace = true
 description = "Transactional External Event Outbox (`m_external_event`), Avro Serializer, and Kafka/AMQP Relay"
 
 [dependencies]
+apache-avro = { workspace = true }
 fineract-core-rs = { workspace = true }
 fineract-avro-rs = { workspace = true }
 fineract-validation-rs = { workspace = true }

@@ -1742,15 +1742,11 @@ impl DualDbRatesRepository {
         let id: i64 = row
             .try_get("id")
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let from_date: NaiveDate = if let Ok(dt) = row.try_get::<NaiveDateTime, _>("from_date") {
-            dt.date()
-        } else if let Ok(d) = row.try_get::<NaiveDate, _>("from_date") {
-            d
-        } else {
+        let from_date: NaiveDate = {
             let s: String = row
                 .try_get("from_date")
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-            let date_part = s.split(' ').next().unwrap_or(s.as_str());
+            let date_part = s.split(|c: char| c == ' ' || c == 'T').next().unwrap_or(s.as_str());
             NaiveDate::parse_from_str(date_part, "%Y-%m-%d")
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?
         };
@@ -1825,7 +1821,7 @@ impl DualDbRatesRepository {
 impl RatesRepository for DualDbRatesRepository {
     async fn create_rate(&self, rate: Rate) -> FineractResult<Rate> {
         let sql = Self::insert_rate_sql(self.dialect);
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
         let user_id: i64 = 1;
 
         sqlx::query(&sql)
@@ -1834,10 +1830,10 @@ impl RatesRepository for DualDbRatesRepository {
             .bind(rate.percentage.to_string())
             .bind(rate.active)
             .bind(rate.product_apply.as_i16())
-            .bind(now)
+            .bind(&now)
             .bind(user_id)
             .bind(user_id)
-            .bind(now)
+            .bind(&now)
             .bind(rate.approve_user_id)
             .execute(&self.pool)
             .await
@@ -1848,7 +1844,7 @@ impl RatesRepository for DualDbRatesRepository {
 
     async fn update_rate(&self, rate: Rate) -> FineractResult<Rate> {
         let sql = Self::update_rate_sql(self.dialect);
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
         let user_id: i64 = 1;
 
         sqlx::query(&sql)
@@ -1857,7 +1853,7 @@ impl RatesRepository for DualDbRatesRepository {
             .bind(rate.active)
             .bind(rate.product_apply.as_i16())
             .bind(user_id)
-            .bind(now)
+            .bind(&now)
             .bind(rate.approve_user_id)
             .bind(rate.id)
             .execute(&self.pool)
@@ -1933,7 +1929,7 @@ impl RatesRepository for DualDbRatesRepository {
 
         let insert_rate_sql = Self::insert_floating_rate_sql(self.dialect);
         let insert_period_sql = Self::insert_floating_rate_period_sql(self.dialect);
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
         let user_id: i64 = 1;
 
         sqlx::query(&insert_rate_sql)
@@ -1941,8 +1937,8 @@ impl RatesRepository for DualDbRatesRepository {
             .bind(&floating_rate.name)
             .bind(floating_rate.is_base_lending_rate)
             .bind(floating_rate.is_active)
-            .bind(now)
-            .bind(now)
+            .bind(&now)
+            .bind(&now)
             .bind(user_id)
             .bind(user_id)
             .execute(&self.pool)
@@ -1950,7 +1946,7 @@ impl RatesRepository for DualDbRatesRepository {
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
 
         for period in &floating_rate.periods {
-            let from_dt = period.from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
+            let from_dt = period.from_date.and_hms_opt(0, 0, 0).unwrap_or_default().to_string();
             sqlx::query(&insert_period_sql)
                 .bind(period.id)
                 .bind(floating_rate.id)
@@ -1958,8 +1954,8 @@ impl RatesRepository for DualDbRatesRepository {
                 .bind(period.interest_rate.to_string())
                 .bind(period.is_differential_to_base_lending_rate)
                 .bind(period.is_active)
-                .bind(now)
-                .bind(now)
+                .bind(&now)
+                .bind(&now)
                 .bind(user_id)
                 .bind(user_id)
                 .execute(&self.pool)
@@ -1979,14 +1975,14 @@ impl RatesRepository for DualDbRatesRepository {
         let update_sql = Self::update_floating_rate_sql(self.dialect);
         let delete_periods_sql = Self::delete_periods_by_floating_rate_id_sql(self.dialect);
         let insert_period_sql = Self::insert_floating_rate_period_sql(self.dialect);
-        let now = Utc::now().naive_utc();
+        let now = Utc::now().naive_utc().to_string();
         let user_id: i64 = 1;
 
         sqlx::query(&update_sql)
             .bind(&floating_rate.name)
             .bind(floating_rate.is_base_lending_rate)
             .bind(floating_rate.is_active)
-            .bind(now)
+            .bind(&now)
             .bind(user_id)
             .bind(floating_rate.id)
             .execute(&self.pool)
@@ -2000,7 +1996,7 @@ impl RatesRepository for DualDbRatesRepository {
             .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
 
         for period in &floating_rate.periods {
-            let from_dt = period.from_date.and_hms_opt(0, 0, 0).unwrap_or_default();
+            let from_dt = period.from_date.and_hms_opt(0, 0, 0).unwrap_or_default().to_string();
             sqlx::query(&insert_period_sql)
                 .bind(period.id)
                 .bind(floating_rate.id)
@@ -2008,8 +2004,8 @@ impl RatesRepository for DualDbRatesRepository {
                 .bind(period.interest_rate.to_string())
                 .bind(period.is_differential_to_base_lending_rate)
                 .bind(period.is_active)
-                .bind(now)
-                .bind(now)
+                .bind(&now)
+                .bind(&now)
                 .bind(user_id)
                 .bind(user_id)
                 .execute(&self.pool)

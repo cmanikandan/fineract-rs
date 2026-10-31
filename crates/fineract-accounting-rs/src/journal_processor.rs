@@ -21,10 +21,10 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
-use fineract_command_rs::{CommandEnvelope, CommandHandler, CommandProcessingResult};
-use fineract_core_rs::error::{ApiParameterError, FineractError};
-use fineract_persistence_rs::{DbRow, DualDbPool, SqlParam};
-use fineract_validation_rs::DataValidatorBuilder;
+use fineract_command_rs::{CommandHandler, CommandProcessingResult, CommandProcessingResultBuilder};
+use fineract_core_rs::context::ExecutionContext;
+use fineract_core_rs::json_command::JsonCommand;
+use fineract_validation_rs::{ApiParameterError, DataValidatorBuilder, FineractError, PlatformApiDataValidationException};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -442,8 +442,7 @@ impl LoanProductAccountMapping {
             }
         }
         self.accounts.get(&param).copied().ok_or_else(|| {
-            FineractError::DomainValidation(vec![ApiParameterError::parameter(
-                param.param_name(),
+            FineractError::domain_rule(
                 "error.msg.accounting.product.mapping.not.found",
                 format!(
                     "GL account mapping `{}` ({:?}) not configured for loan product {}",
@@ -451,7 +450,7 @@ impl LoanProductAccountMapping {
                     param,
                     self.product_id
                 ),
-            )])
+            )
         })
     }
 }
@@ -539,8 +538,7 @@ impl SavingsProductAccountMapping {
             }
         }
         self.accounts.get(&param).copied().ok_or_else(|| {
-            FineractError::DomainValidation(vec![ApiParameterError::parameter(
-                param.param_name(),
+            FineractError::domain_rule(
                 "error.msg.accounting.product.mapping.not.found",
                 format!(
                     "GL account mapping `{}` ({:?}) not configured for savings product {}",
@@ -548,7 +546,7 @@ impl SavingsProductAccountMapping {
                     param,
                     self.product_id
                 ),
-            )])
+            )
         })
     }
 }
@@ -627,35 +625,6 @@ impl JournalEntryRecord {
         self.entity_type_enum.and_then(PortfolioProductType::from_i16)
     }
 
-    /// Converts a database row from `acc_gl_journal_entry` into a `JournalEntryRecord`.
-    pub fn from_db_row(row: &DbRow) -> Result<Self, FineractError> {
-        Ok(Self {
-            id: row.get_i64("id")?,
-            account_id: row.get_i64("account_id")?,
-            office_id: row.get_i64("office_id")?,
-            reversal_id: row.get_opt_i64("reversal_id")?,
-            currency_code: row.get_string("currency_code")?,
-            transaction_id: row.get_string("transaction_id")?,
-            loan_transaction_id: row.get_opt_i64("loan_transaction_id")?,
-            savings_transaction_id: row.get_opt_i64("savings_transaction_id")?,
-            client_transaction_id: row.get_opt_i64("client_transaction_id")?,
-            share_transaction_id: row.get_opt_i64("share_transaction_id")?,
-            reversed: row.get_bool("reversed")?,
-            manual_entry: row.get_bool("manual_entry")?,
-            entry_date: row.get_date("entry_date")?,
-            type_enum: row.get_i16("type_enum")?,
-            amount: row.get_decimal("amount")?,
-            description: row.get_opt_string("description")?,
-            entity_type_enum: row.get_opt_i16("entity_type_enum")?,
-            entity_id: row.get_opt_i64("entity_id")?,
-            office_running_balance: row.get_decimal("office_running_balance")?,
-            organization_running_balance: row.get_decimal("organization_running_balance")?,
-            is_running_balance_calculated: row.get_bool("is_running_balance_calculated")?,
-            payment_details_id: row.get_opt_i64("payment_details_id")?,
-            ref_num: row.get_opt_string("ref_num")?,
-            submitted_on_date: row.get_date("submitted_on_date")?,
-        })
-    }
 }
 
 // ============================================================================
@@ -706,7 +675,7 @@ impl DoubleEntryJournalValidator {
         is_manual: bool,
         business_date: Option<NaiveDate>,
     ) -> Result<(), FineractError> {
-        let mut dvb = DataValidatorBuilder::new("glJournalEntry");
+        let mut dvb = DataValidatorBuilder::for_resource("glJournalEntry");
         dvb.reset()
             .parameter("officeId")
             .value(Some(office_id))
@@ -717,18 +686,15 @@ impl DoubleEntryJournalValidator {
             .value(Some(currency_code))
             .not_blank()
             .not_exceeding_length_of(3);
-        dvb.finish()?;
+        dvb.throw_validation_errors()?;
 
         // Check future date if business_date is provided
         if let Some(max_date) = business_date {
             if entry_date > max_date {
-                return Err(FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.invalid.future.date".to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.future.date", format!(
                         "The journal entry cannot be made for a future date `{}` (business date `{}`)",
                         entry_date, max_date
-                    ),
-                });
+                    ),));
             }
         }
 
@@ -741,24 +707,15 @@ impl DoubleEntryJournalValidator {
 
         if let Some(closing_date) = latest_closure_date {
             if entry_date <= closing_date {
-                return Err(FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.invalid.accounting.closed"
-                        .to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.accounting.closed", format!(
                         "Journal entry on `{}` cannot be made prior to or on last account closing date `{}` for office {}",
                         entry_date, closing_date, office_id
-                    ),
-                });
+                    ),));
             }
         }
 
         if lines.is_empty() {
-            return Err(FineractError::DomainRule {
-                globalisation_code: "error.msg.glJournalEntry.invalid.no.debits.or.credits"
-                    .to_string(),
-                default_user_message:
-                    "Journal Entry must have at least one Debit and one Credit".to_string(),
-            });
+            return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.no.debits.or.credits", "Journal Entry must have at least one Debit and one Credit".to_string(),));
         }
 
         let mut debit_count = 0usize;
@@ -768,58 +725,36 @@ impl DoubleEntryJournalValidator {
 
         for line in lines {
             if line.gl_account_id <= 0 || line.amount <= Decimal::ZERO {
-                return Err(FineractError::DomainRule {
-                    globalisation_code:
-                        "error.msg.glJournalEntry.invalid.empty.account.or.amount".to_string(),
-                    default_user_message:
-                        "Both account and positive amount must be specified for all Debits and Credits"
-                            .to_string(),
-                });
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.empty.account.or.amount", "Both account and positive amount must be specified for all Debits and Credits"
+                            .to_string(),));
             }
 
             let account = accounts.get(&line.gl_account_id).ok_or_else(|| {
-                FineractError::DomainRule {
-                    globalisation_code:
-                        "error.msg.glJournalEntry.invalid.debit.or.credit.accounts".to_string(),
-                    default_user_message: format!(
+                FineractError::domain_rule("error.msg.glJournalEntry.invalid.debit.or.credit.accounts", format!(
                         "GL account with id {} does not exist",
                         line.gl_account_id
-                    ),
-                }
+                    ),)
             })?;
 
             if account.disabled {
-                return Err(FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.invalid.account.disabled"
-                        .to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.account.disabled", format!(
                         "Target GL account `{}` ({}) has been disabled",
                         account.name, account.gl_code
-                    ),
-                });
+                    ),));
             }
 
             if account.account_usage != GLAccountUsage::Detail {
-                return Err(FineractError::DomainRule {
-                    globalisation_code:
-                        "error.msg.glJournalEntry.invalid.debit.or.credit.accounts".to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.debit.or.credit.accounts", format!(
                         "Journal entries can only be posted to DETAIL accounts; account `{}` ({}) is a HEADER account",
                         account.name, account.gl_code
-                    ),
-                });
+                    ),));
             }
 
             if is_manual && !account.manual_entries_allowed {
-                return Err(FineractError::DomainRule {
-                    globalisation_code:
-                        "error.msg.glJournalEntry.invalid.account.manual.adjustments.not.permitted"
-                            .to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.account.manual.adjustments.not.permitted", format!(
                         "Target account `{}` ({}) does not allow manual adjustments",
                         account.name, account.gl_code
-                    ),
-                });
+                    ),));
             }
 
             match line.entry_type {
@@ -835,23 +770,14 @@ impl DoubleEntryJournalValidator {
         }
 
         if debit_count == 0 || credit_count == 0 {
-            return Err(FineractError::DomainRule {
-                globalisation_code: "error.msg.glJournalEntry.invalid.no.debits.or.credits"
-                    .to_string(),
-                default_user_message:
-                    "Journal Entry must have at least one Debit and one Credit".to_string(),
-            });
+            return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.no.debits.or.credits", "Journal Entry must have at least one Debit and one Credit".to_string(),));
         }
 
         if total_debits != total_credits || total_debits <= Decimal::ZERO {
-            return Err(FineractError::DomainRule {
-                globalisation_code: "error.msg.glJournalEntry.invalid.mismatch.debits.credits"
-                    .to_string(),
-                default_user_message: format!(
+            return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.mismatch.debits.credits", format!(
                     "Sum of All Debits ({}) must equal the sum of all Credits ({}) for a Journal Entry",
                     total_debits, total_credits
-                ),
-            });
+                ),));
         }
 
         Ok(())
@@ -2000,22 +1926,15 @@ impl AccountingBridgeEngine {
         closures: &[GLClosure],
     ) -> Result<Vec<JournalEntryRecord>, FineractError> {
         if original_entries.is_empty() {
-            return Err(FineractError::DomainRule {
-                globalisation_code: "error.msg.glJournalEntry.transaction.id.not.found"
-                    .to_string(),
-                default_user_message: "No journal entries found to reverse".to_string(),
-            });
+            return Err(FineractError::domain_rule("error.msg.glJournalEntry.transaction.id.not.found", "No journal entries found to reverse".to_string(),));
         }
 
         for orig in original_entries.iter() {
             if orig.reversed {
-                return Err(FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.already.reversed".to_string(),
-                    default_user_message: format!(
+                return Err(FineractError::domain_rule("error.msg.glJournalEntry.already.reversed", format!(
                         "Journal entries for transaction `{}` have already been reversed",
                         orig.transaction_id
-                    ),
-                });
+                    ),));
             }
 
             let latest_closure = closures
@@ -2025,14 +1944,10 @@ impl AccountingBridgeEngine {
                 .max();
             if let Some(closing_date) = latest_closure {
                 if orig.entry_date <= closing_date || reversal_date <= closing_date {
-                    return Err(FineractError::DomainRule {
-                        globalisation_code: "error.msg.glJournalEntry.invalid.accounting.closed"
-                            .to_string(),
-                        default_user_message: format!(
+                    return Err(FineractError::domain_rule("error.msg.glJournalEntry.invalid.accounting.closed", format!(
                             "Cannot reverse journal entry on `{}` prior to or on office closing date `{}`",
                             orig.entry_date, closing_date
-                        ),
-                    });
+                        ),));
                 }
             }
         }
@@ -2041,10 +1956,7 @@ impl AccountingBridgeEngine {
         for (idx, orig) in original_entries.iter_mut().enumerate() {
             let rev_id = next_id_start + (idx as i64);
             let orig_type = JournalEntryType::from_i16(orig.type_enum).ok_or_else(|| {
-                FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.invalid.type".to_string(),
-                    default_user_message: format!("Invalid journal entry type {}", orig.type_enum),
-                }
+                FineractError::domain_rule("error.msg.glJournalEntry.invalid.type", format!("Invalid journal entry type {}", orig.type_enum),)
             })?;
             let opposite_type = orig_type.opposite();
 
@@ -2245,7 +2157,7 @@ pub struct RunningBalanceCalculator;
 impl RunningBalanceCalculator {
     /// Returns the signed delta for a journal entry given its `GLAccountType` and `JournalEntryType`.
     #[inline]
-    pub const fn signed_balance_delta(
+    pub fn signed_balance_delta(
         account_type: GLAccountType,
         entry_type: JournalEntryType,
         amount: Decimal,
@@ -2282,22 +2194,19 @@ impl RunningBalanceCalculator {
         for idx in indices {
             let entry = &mut entries[idx];
             let account = accounts.get(&entry.account_id).ok_or_else(|| {
-                FineractError::NotFound {
-                    globalisation_code: "error.msg.glaccount.id.invalid".to_string(),
-                    default_user_message: format!(
+                FineractError::not_found(
+                    "error.msg.glaccount.id.invalid",
+                    format!(
                         "GL Account with id {} does not exist",
                         entry.account_id
                     ),
-                }
+                )
             })?;
             let entry_type = JournalEntryType::from_i16(entry.type_enum).ok_or_else(|| {
-                FineractError::DomainRule {
-                    globalisation_code: "error.msg.glJournalEntry.invalid.type".to_string(),
-                    default_user_message: format!(
+                FineractError::domain_rule("error.msg.glJournalEntry.invalid.type", format!(
                         "Invalid journal entry type {}",
                         entry.type_enum
-                    ),
-                }
+                    ),)
             })?;
 
             // Note: In Fineract's running balance job (`JournalEntryRunningBalanceUpdateServiceImpl`),
@@ -2355,144 +2264,6 @@ pub trait JournalEntryRepository: Send + Sync {
     ) -> Result<(), FineractError>;
 }
 
-/// Dual-DB (`PostgreSQL` + `MySQL`) SQL repository for `acc_gl_journal_entry`.
-pub struct DualDbJournalEntryRepository {
-    pool: Arc<DualDbPool>,
-}
-
-impl DualDbJournalEntryRepository {
-    pub fn new(pool: Arc<DualDbPool>) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait]
-impl JournalEntryRepository for DualDbJournalEntryRepository {
-    async fn save_batch(
-        &self,
-        mut entries: Vec<JournalEntryRecord>,
-    ) -> Result<Vec<JournalEntryRecord>, FineractError> {
-        let sql = "INSERT INTO acc_gl_journal_entry (\
-            account_id, office_id, reversal_id, currency_code, transaction_id, \
-            loan_transaction_id, savings_transaction_id, client_transaction_id, share_transaction_id, \
-            reversed, manual_entry, entry_date, type_enum, amount, description, \
-            entity_type_enum, entity_id, office_running_balance, organization_running_balance, \
-            is_running_balance_calculated, payment_details_id, ref_num, submitted_on_date\
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-
-        for entry in &mut entries {
-            let id = self
-                .pool
-                .insert_returning_id(
-                    sql,
-                    &[
-                        SqlParam::I64(entry.account_id),
-                        SqlParam::I64(entry.office_id),
-                        SqlParam::OptI64(entry.reversal_id),
-                        SqlParam::Str(entry.currency_code.clone()),
-                        SqlParam::Str(entry.transaction_id.clone()),
-                        SqlParam::OptI64(entry.loan_transaction_id),
-                        SqlParam::OptI64(entry.savings_transaction_id),
-                        SqlParam::OptI64(entry.client_transaction_id),
-                        SqlParam::OptI64(entry.share_transaction_id),
-                        SqlParam::Bool(entry.reversed),
-                        SqlParam::Bool(entry.manual_entry),
-                        SqlParam::Date(entry.entry_date),
-                        SqlParam::I16(entry.type_enum),
-                        SqlParam::Decimal(entry.amount),
-                        SqlParam::OptStr(entry.description.clone()),
-                        SqlParam::OptI16(entry.entity_type_enum),
-                        SqlParam::OptI64(entry.entity_id),
-                        SqlParam::Decimal(entry.office_running_balance),
-                        SqlParam::Decimal(entry.organization_running_balance),
-                        SqlParam::Bool(entry.is_running_balance_calculated),
-                        SqlParam::OptI64(entry.payment_details_id),
-                        SqlParam::OptStr(entry.ref_num.clone()),
-                        SqlParam::Date(entry.submitted_on_date),
-                    ],
-                )
-                .await?;
-            entry.id = id;
-        }
-
-        Ok(entries)
-    }
-
-    async fn find_by_transaction_id(
-        &self,
-        transaction_id: &str,
-    ) -> Result<Vec<JournalEntryRecord>, FineractError> {
-        let sql = "SELECT id, account_id, office_id, reversal_id, currency_code, transaction_id, \
-            loan_transaction_id, savings_transaction_id, client_transaction_id, share_transaction_id, \
-            reversed, manual_entry, entry_date, type_enum, amount, description, \
-            entity_type_enum, entity_id, office_running_balance, organization_running_balance, \
-            is_running_balance_calculated, payment_details_id, ref_num, submitted_on_date \
-            FROM acc_gl_journal_entry WHERE transaction_id = ? ORDER BY id ASC";
-        let rows = self
-            .pool
-            .query_all(sql, &[SqlParam::Str(transaction_id.to_string())])
-            .await?;
-        rows.iter().map(JournalEntryRecord::from_db_row).collect()
-    }
-
-    async fn find_by_office(
-        &self,
-        office_id: Option<i64>,
-    ) -> Result<Vec<JournalEntryRecord>, FineractError> {
-        let (sql, params) = if let Some(oid) = office_id {
-            (
-                "SELECT id, account_id, office_id, reversal_id, currency_code, transaction_id, \
-                loan_transaction_id, savings_transaction_id, client_transaction_id, share_transaction_id, \
-                reversed, manual_entry, entry_date, type_enum, amount, description, \
-                entity_type_enum, entity_id, office_running_balance, organization_running_balance, \
-                is_running_balance_calculated, payment_details_id, ref_num, submitted_on_date \
-                FROM acc_gl_journal_entry WHERE office_id = ? ORDER BY entry_date ASC, id ASC",
-                vec![SqlParam::I64(oid)],
-            )
-        } else {
-            (
-                "SELECT id, account_id, office_id, reversal_id, currency_code, transaction_id, \
-                loan_transaction_id, savings_transaction_id, client_transaction_id, share_transaction_id, \
-                reversed, manual_entry, entry_date, type_enum, amount, description, \
-                entity_type_enum, entity_id, office_running_balance, organization_running_balance, \
-                is_running_balance_calculated, payment_details_id, ref_num, submitted_on_date \
-                FROM acc_gl_journal_entry ORDER BY entry_date ASC, id ASC",
-                vec![],
-            )
-        };
-        let rows = self.pool.query_all(sql, &params).await?;
-        rows.iter().map(JournalEntryRecord::from_db_row).collect()
-    }
-
-    async fn update_batch(
-        &self,
-        entries: &[JournalEntryRecord],
-    ) -> Result<(), FineractError> {
-        let sql = "UPDATE acc_gl_journal_entry SET \
-            reversal_id = ?, reversed = ?, office_running_balance = ?, \
-            organization_running_balance = ?, is_running_balance_calculated = ? \
-            WHERE id = ?";
-        for entry in entries {
-            self.pool
-                .execute(
-                    sql,
-                    &[
-                        SqlParam::OptI64(entry.reversal_id),
-                        SqlParam::Bool(entry.reversed),
-                        SqlParam::Decimal(entry.office_running_balance),
-                        SqlParam::Decimal(entry.organization_running_balance),
-                        SqlParam::Bool(entry.is_running_balance_calculated),
-                        SqlParam::I64(entry.id),
-                    ],
-                )
-                .await?;
-        }
-        Ok(())
-    }
-}
-
-/// Thread-safe in-memory repository for unit testing and standalone command execution.
-#[derive(Default)]
 pub struct InMemoryJournalEntryRepository {
     entries: RwLock<Vec<JournalEntryRecord>>,
     next_id: RwLock<i64>,
@@ -2623,15 +2394,17 @@ impl CommandHandler for CreateJournalEntryCommandHandler {
 
     async fn handle(
         &self,
-        envelope: &CommandEnvelope,
+        _ctx: &ExecutionContext,
+        command: &JsonCommand,
     ) -> Result<CommandProcessingResult, FineractError> {
         let payload: CreateJournalEntryCommandPayload =
-            serde_json::from_str(&envelope.json_payload).map_err(|e| {
-                FineractError::DomainValidation(vec![ApiParameterError::parameter(
-                    "json",
+            serde_json::from_str(command.json()).map_err(|e| {
+                FineractError::DataValidation(PlatformApiDataValidationException::new(vec![ApiParameterError::parameter_error(
                     "error.msg.invalid.request.body",
                     format!("Invalid CREATE_JOURNALENTRY payload: {e}"),
-                )])
+                    "json",
+                    vec![],
+                )]))
             })?;
 
         let mut lines = Vec::with_capacity(payload.debits.len() + payload.credits.len());
@@ -2675,10 +2448,10 @@ impl CommandHandler for CreateJournalEntryCommandHandler {
             .map(|r| r.transaction_id.clone())
             .unwrap_or_default();
 
-        Ok(CommandProcessingResult::from_office_and_tx(
-            payload.office_id,
-            tx_id,
-        ))
+        Ok(CommandProcessingResultBuilder::new()
+            .with_office_id(payload.office_id)
+            .with_transaction_id(tx_id)
+            .build())
     }
 }
 
@@ -3044,10 +2817,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            FineractError::DomainRule {
-                ref globalisation_code,
-                ..
-            } if globalisation_code == "error.msg.glJournalEntry.invalid.mismatch.debits.credits"
+            FineractError::DomainRule(ref e) if e.globalisation_message_code == "error.msg.glJournalEntry.invalid.mismatch.debits.credits"
         ));
 
         // 3. Only debits (no credits) fails
@@ -3063,10 +2833,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            FineractError::DomainRule {
-                ref globalisation_code,
-                ..
-            } if globalisation_code == "error.msg.glJournalEntry.invalid.no.debits.or.credits"
+            FineractError::DomainRule(ref e) if e.globalisation_message_code == "error.msg.glJournalEntry.invalid.no.debits.or.credits"
         ));
 
         // 4. Entry on or before closure date fails
@@ -3082,10 +2849,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            FineractError::DomainRule {
-                ref globalisation_code,
-                ..
-            } if globalisation_code == "error.msg.glJournalEntry.invalid.accounting.closed"
+            FineractError::DomainRule(ref e) if e.globalisation_message_code == "error.msg.glJournalEntry.invalid.accounting.closed"
         ));
 
         // 5. Disabled, Header, and Manual-disallowed accounts fail appropriately

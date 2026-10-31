@@ -13,9 +13,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use fineract_accounting_rs::gl_and_rules::{GLAccount, GLAccountType, GLAccountUsage};
 use fineract_accounting_rs::journal_processor::{
-    AccountingBridgeEngine, AccountingRuleType, JournalEntryRecord, LoanProductAccountMapping,
-    LoanTransactionAccountingContext, LoanTransactionAccountingType,
+    AccountingBridgeEngine, AccountingRuleType, JournalEntryRecord, LoanBridgeTransaction,
+    LoanBridgeTransactionType, LoanProductAccountMapping, LoanProductAccountingParams,
 };
 use fineract_command_rs::pipeline::{
     CommandHandler, CommandProcessingResult, CommandProcessingResultBuilder,
@@ -33,8 +34,8 @@ use fineract_schedule_engine::{
 use fineract_validation_rs::{DataValidatorBuilder, FineractError, PlatformDomainRuleException};
 
 use crate::products_and_tranches::{
-    LoanDisbursementDetails, LoanProduct, LoanRescheduleEngine, LoanRescheduleRequest,
-    MultiTrancheDisbursementEngine,
+    LoanDisbursementDetails, LoanProduct, LoanRescheduleConfig, LoanRescheduleEngine,
+    LoanRescheduleRequest, MultiTrancheDisbursementEngine, PeriodFrequencyType,
 };
 use fineract_loan_rs::lifecycle_and_delinquency::{LoanAggregate, LoanChargeOffBehaviour, LoanStatus};
 use fineract_loan_rs::schedule_and_terms::{
@@ -109,10 +110,9 @@ impl LoanRepository for InMemoryLoanRepository {
     }
 
     async fn save_loan(&self, mut loan: LoanAggregate) -> Result<LoanAggregate, FineractError> {
-        if loan.id <= 0 {
-            loan.id = self.allocate_id();
-        }
-        self.loans.insert(loan.id, loan.clone());
+        let id = loan.id.filter(|&i| i > 0).unwrap_or_else(|| self.allocate_id());
+        loan.id = Some(id);
+        self.loans.insert(id, loan.clone());
         Ok(loan)
     }
 
@@ -262,19 +262,69 @@ impl LoanRepository for DualDbLoanRepository {
 #[derive(Debug, Clone)]
 pub struct LoanAccountingBridgeAdapter {
     pub default_mapping: LoanProductAccountMapping,
+    pub accounts: HashMap<i64, GLAccount>,
 }
 
 impl Default for LoanAccountingBridgeAdapter {
     fn default() -> Self {
+        let mapping = LoanProductAccountMapping::new(1, AccountingRuleType::AccrualPeriodic)
+            .with_account(LoanProductAccountingParams::FundSource, 101)
+            .with_account(LoanProductAccountingParams::LoanPortfolio, 102)
+            .with_account(LoanProductAccountingParams::InterestReceivable, 103)
+            .with_account(LoanProductAccountingParams::FeesReceivable, 104)
+            .with_account(LoanProductAccountingParams::PenaltiesReceivable, 105)
+            .with_account(LoanProductAccountingParams::TransfersInSuspense, 106)
+            .with_account(LoanProductAccountingParams::OverpaymentLiability, 201)
+            .with_account(LoanProductAccountingParams::InterestOnLoans, 401)
+            .with_account(LoanProductAccountingParams::IncomeFromFees, 402)
+            .with_account(LoanProductAccountingParams::IncomeFromPenalties, 403)
+            .with_account(LoanProductAccountingParams::IncomeFromRecovery, 404)
+            .with_account(LoanProductAccountingParams::LossesWrittenOff, 501)
+            .with_account(LoanProductAccountingParams::GoodwillCredit, 503);
+
+        let make = |id: i64, name: &str, code: &str, account_type: GLAccountType| GLAccount {
+            id,
+            parent_id: None,
+            hierarchy: Some(format!(".{id}.")),
+            name: name.to_string(),
+            gl_code: code.to_string(),
+            disabled: false,
+            manual_entries_allowed: true,
+            account_type,
+            account_usage: GLAccountUsage::Detail,
+            description: None,
+            tag_id: None,
+        };
+
+        let mut accounts = HashMap::new();
+        accounts.insert(101, make(101, "Fund Source Cash", "10100", GLAccountType::Asset));
+        accounts.insert(102, make(102, "Loan Portfolio", "10200", GLAccountType::Asset));
+        accounts.insert(103, make(103, "Interest Receivable", "10300", GLAccountType::Asset));
+        accounts.insert(104, make(104, "Fees Receivable", "10400", GLAccountType::Asset));
+        accounts.insert(105, make(105, "Penalties Receivable", "10500", GLAccountType::Asset));
+        accounts.insert(106, make(106, "Suspense", "10600", GLAccountType::Asset));
+        accounts.insert(201, make(201, "Overpayment Liability", "20100", GLAccountType::Liability));
+        accounts.insert(401, make(401, "Interest on Loans", "40100", GLAccountType::Income));
+        accounts.insert(402, make(402, "Income from Fees", "40200", GLAccountType::Income));
+        accounts.insert(403, make(403, "Income from Penalties", "40300", GLAccountType::Income));
+        accounts.insert(404, make(404, "Recovery Income", "40400", GLAccountType::Income));
+        accounts.insert(501, make(501, "Losses Written Off", "50100", GLAccountType::Expense));
+        accounts.insert(503, make(503, "Goodwill Credit", "50300", GLAccountType::Expense));
+
         Self {
-            default_mapping: LoanProductAccountMapping::standard_default(1),
+            default_mapping: mapping,
+            accounts,
         }
     }
 }
 
 impl LoanAccountingBridgeAdapter {
     pub fn new(default_mapping: LoanProductAccountMapping) -> Self {
-        Self { default_mapping }
+        let def = Self::default();
+        Self {
+            default_mapping,
+            accounts: def.accounts,
+        }
     }
 
     pub fn generate_entries_for_transaction(
@@ -282,31 +332,42 @@ impl LoanAccountingBridgeAdapter {
         loan: &LoanAggregate,
         tx: &LoanTransaction,
         rule_type: AccountingRuleType,
-        acct_tx_type: LoanTransactionAccountingType,
+        acct_tx_type: LoanBridgeTransactionType,
     ) -> Result<Vec<JournalEntryRecord>, FineractError> {
         if rule_type == AccountingRuleType::None {
             return Ok(Vec::new());
         }
-        let ctx = LoanTransactionAccountingContext {
-            loan_id: loan.id,
-            loan_product_id: loan.product_id,
-            office_id: loan.office_id,
-            currency_code: loan.currency.code.clone(),
-            transaction_id: format!("L{}", tx.id),
-            loan_transaction_id: tx.id,
-            transaction_date: tx.date_of,
+        let bridge_tx = LoanBridgeTransaction {
+            loan_id: loan.id.unwrap_or(0),
+            loan_Product_id: loan.product_id,
+            loan_transaction_id: tx.id.unwrap_or(0),
+            office_id: loan.office_id.unwrap_or(1),
+            transaction_date: tx.transaction_date,
             submitted_on_date: tx.submitted_on_date,
-            accounting_rule: rule_type,
+            currency_code: loan.currency.code.clone(),
             transaction_type: acct_tx_type,
-            amount: tx.amount.amount(),
-            principal_portion: tx.principal_portion.amount(),
-            interest_portion: tx.interest_portion.amount(),
-            fee_charges_portion: tx.fee_charges_portion.amount(),
-            penalty_charges_portion: tx.penalty_charges_portion.amount(),
-            overpayment_portion: tx.overpayment_portion.amount(),
+            amount: tx.amount,
+            principal_portion: tx.principal_portion,
+            interest_portion: tx.interest_portion,
+            fee_charges_portion: tx.fee_charges_portion,
+            penalty_charges_portion: tx.penalty_charges_portion,
+            overpayment_portion: tx.overpayment_portion,
             payment_type_id: None,
+            payment_details_id: None,
+            is_account_transfer: false,
+            charge_allocations: Vec::new(),
+            description: None,
+            ref_num: None,
         };
-        AccountingBridgeEngine::generate_loan_journal_entries(&ctx, &self.default_mapping)
+        let mut mapping = self.default_mapping.clone();
+        mapping.accounting_rule = rule_type;
+        AccountingBridgeEngine::generate_loan_journal_entries(
+            1,
+            &bridge_tx,
+            &mapping,
+            &[],
+            &self.accounts,
+        )
     }
 }
 
@@ -320,10 +381,10 @@ pub struct CreateLoanProductCommandHandler {
 
 #[async_trait]
 impl CommandHandler for CreateLoanProductCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "CREATE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOANPRODUCT"
     }
     async fn handle(
@@ -359,16 +420,21 @@ impl CommandHandler for CreateLoanProductCommandHandler {
             .integer_value_of_parameter_named("numberOfRepayments")?
             .unwrap_or(12) as u32;
 
-        let mut product = LoanProduct::default_cumulative(0, &short_name, &name, &currency_code);
-        product.digits_after_decimal = digits;
+        let mut product = LoanProduct::new(
+            0,
+            &short_name,
+            &name,
+            &currency_code,
+            digits as i32,
+            principal,
+            interest_rate,
+            num_repayments,
+        );
         product.min_principal = min_principal;
-        product.default_principal = principal;
         product.max_principal = max_principal;
         product.min_nominal_interest_rate = Decimal::ZERO;
-        product.default_nominal_interest_rate = interest_rate;
         product.max_nominal_interest_rate = interest_rate * Decimal::from(2);
         product.min_number_of_repayments = 1;
-        product.default_number_of_repayments = num_repayments;
         product.max_number_of_repayments = num_repayments * 2;
 
         let saved = self.repo.save_product(product).await?;
@@ -385,10 +451,10 @@ pub struct SubmitLoanApplicationCommandHandler {
 
 #[async_trait]
 impl CommandHandler for SubmitLoanApplicationCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "CREATE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -421,7 +487,7 @@ impl CommandHandler for SubmitLoanApplicationCommandHandler {
 
         let product = self.repo.find_product_by_id(product_id).await?;
         let currency = match &product {
-            Some(p) => MonetaryCurrency::new(&p.currency_code, p.digits_after_decimal, None),
+            Some(p) => MonetaryCurrency::new(&p.currency_code, p.digits_after_decimal.max(0) as u32, None),
             None => MonetaryCurrency::new("USD", 2, None),
         };
         let principal_money =
@@ -433,8 +499,8 @@ impl CommandHandler for SubmitLoanApplicationCommandHandler {
             number_of_repayments: repayments,
             repayment_every: 1,
             repayment_frequency_type: CalendarFrequencyType::Monthly,
-            amortization_method: AmortizationMethod::EqualInstallments,
-            interest_method: InterestMethod::DecliningBalance,
+            amortization_method: fineract_schedule_engine::AmortizationMethod::EqualInstallments,
+            interest_method: fineract_schedule_engine::InterestMethod::DecliningBalance,
             interest_calculation_period_method: InterestCalculationPeriodMethod::SameAsRepaymentPeriod,
             days_in_month_type: DaysInMonthType::Days30,
             days_in_year_type: DaysInYearType::Days360,
@@ -447,47 +513,47 @@ impl CommandHandler for SubmitLoanApplicationCommandHandler {
             down_payment_percentage: None,
         };
 
-        let generated =
-            EmbeddableScheduleGenerator::generate(&terms, FineractRoundingMode::HalfEven)?;
+        let generated = EmbeddableScheduleGenerator::generate_schedule(&terms);
         let installments: Vec<LoanRepaymentScheduleInstallment> = generated
             .installments
             .into_iter()
             .map(|inst| {
-                LoanRepaymentScheduleInstallment::new(
+                let mut schedule_inst = LoanRepaymentScheduleInstallment::new(
+                    None,
                     inst.installment_number as i32,
-                    inst.from_date,
+                    Some(inst.from_date),
                     inst.due_date,
-                    inst.principal_amount,
-                    inst.interest_amount,
-                    inst.fee_charges_amount,
-                    inst.penalty_charges_amount,
-                    false,
-                    inst.is_down_payment,
-                )
+                    inst.principal_amount.amount(),
+                    inst.interest_amount.amount(),
+                    inst.fee_charges_amount.amount(),
+                    inst.penalty_charges_amount.amount(),
+                );
+                schedule_inst.is_down_payment = inst.is_down_payment;
+                schedule_inst
             })
             .collect();
 
-        let mut loan = LoanAggregate::submit_application(
-            0,
+        let mut loan = LoanAggregate::new(
+            None,
             format!("LN-{client_id}-{product_id}"),
-            client_id,
-            1,
             product_id,
             currency,
-            principal_money,
-            annual_rate,
-            submitted_date,
-            expected_disbursal,
+            principal_dec,
             installments,
             TransactionProcessorStrategyCode::MifosStandard,
-        )?;
-        loan = self.repo.save_loan(loan).await?;
+            FineractRoundingMode::HalfEven,
+        );
+        loan.client_id = Some(client_id);
+        loan.office_id = Some(1);
+        loan.submit_application(submitted_date, Some(expected_disbursal))?;
+        let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(0);
 
         Ok(CommandProcessingResultBuilder::new()
             .with_command_id(command.command_id.unwrap_or(1))
             .with_client_id(client_id)
-            .with_loan_id(loan.id)
-            .with_resource_id(loan.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
             .build())
     }
 }
@@ -498,10 +564,10 @@ pub struct ApproveLoanApplicationCommandHandler {
 
 #[async_trait]
 impl CommandHandler for ApproveLoanApplicationCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "APPROVE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -519,16 +585,17 @@ impl CommandHandler for ApproveLoanApplicationCommandHandler {
         })?;
         let approved_on = command
             .local_date_value_of_parameter_named("approvedOnDate")?
-            .unwrap_or(loan.submitted_on_date);
+            .or(loan.submitted_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let approved_amt = command
-            .big_decimal_value_of_parameter_named("approvedLoanAmount")?
-            .map(|d| Money::of(loan.currency.clone(), d, FineractRoundingMode::HalfEven));
+            .big_decimal_value_of_parameter_named("approvedLoanAmount")?;
 
         loan.approve(approved_on, approved_amt)?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(saved.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
             .build())
     }
 }
@@ -539,10 +606,10 @@ pub struct UndoLoanApprovalCommandHandler {
 
 #[async_trait]
 impl CommandHandler for UndoLoanApprovalCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "APPROVALUNDO"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -560,9 +627,10 @@ impl CommandHandler for UndoLoanApprovalCommandHandler {
         })?;
         loan.undo_approval()?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(saved.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
             .build())
     }
 }
@@ -573,10 +641,10 @@ pub struct RejectLoanApplicationCommandHandler {
 
 #[async_trait]
 impl CommandHandler for RejectLoanApplicationCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "REJECT"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -594,12 +662,14 @@ impl CommandHandler for RejectLoanApplicationCommandHandler {
         })?;
         let rejected_on = command
             .local_date_value_of_parameter_named("rejectedOnDate")?
-            .unwrap_or(loan.submitted_on_date);
+            .or(loan.submitted_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         loan.reject(rejected_on)?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(saved.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
             .build())
     }
 }
@@ -611,10 +681,10 @@ pub struct DisburseLoanCommandHandler {
 
 #[async_trait]
 impl CommandHandler for DisburseLoanCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "DISBURSE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -632,25 +702,27 @@ impl CommandHandler for DisburseLoanCommandHandler {
         })?;
         let actual_disbursement_date = command
             .local_date_value_of_parameter_named("actualDisbursementDate")?
-            .unwrap_or(loan.expected_disbursement_date);
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let amount = command
-            .big_decimal_value_of_parameter_named("transactionAmount")?
-            .map(|d| Money::of(loan.currency.clone(), d, FineractRoundingMode::HalfEven));
+            .big_decimal_value_of_parameter_named("transactionAmount")?;
 
         let tx = loan.disburse(actual_disbursement_date, amount)?;
         let journals = self.accounting_bridge.generate_entries_for_transaction(
             &loan,
             &tx,
             AccountingRuleType::AccrualPeriodic,
-            LoanTransactionAccountingType::Disbursement,
+            LoanBridgeTransactionType::Disbursement,
         )?;
         self.repo.append_journal_entries(journals).await?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(saved.id)
-            .with_sub_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
+            .with_sub_resource_id(tx_id)
             .build())
     }
 }
@@ -661,10 +733,10 @@ pub struct UndoLoanDisbursalCommandHandler {
 
 #[async_trait]
 impl CommandHandler for UndoLoanDisbursalCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "DISBURSALUNDO"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -682,9 +754,10 @@ impl CommandHandler for UndoLoanDisbursalCommandHandler {
         })?;
         loan.undo_disbursal()?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(saved.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(saved_id)
             .build())
     }
 }
@@ -696,10 +769,10 @@ pub struct LoanRepaymentCommandHandler {
 
 #[async_trait]
 impl CommandHandler for LoanRepaymentCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "REPAYMENT"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -717,30 +790,28 @@ impl CommandHandler for LoanRepaymentCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let txn_amt_dec = command
             .big_decimal_value_of_parameter_named("transactionAmount")?
             .unwrap_or(Decimal::ZERO);
-        let txn_amt = Money::of(
-            loan.currency.clone(),
-            txn_amt_dec,
-            FineractRoundingMode::HalfEven,
-        );
 
-        let tx = loan.make_repayment(txn_date, txn_amt, txn_date)?;
+        let tx = loan.make_repayment(txn_date, txn_amt_dec)?;
         let journals = self.accounting_bridge.generate_entries_for_transaction(
             &loan,
             &tx,
             AccountingRuleType::AccrualPeriodic,
-            LoanTransactionAccountingType::Repayment,
+            LoanBridgeTransactionType::Repayment,
         )?;
         self.repo.append_journal_entries(journals).await?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
-            .with_sub_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
+            .with_sub_resource_id(tx_id)
             .build())
     }
 }
@@ -752,10 +823,10 @@ pub struct LoanGoodwillCreditCommandHandler {
 
 #[async_trait]
 impl CommandHandler for LoanGoodwillCreditCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "GOODWILLCREDIT"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -773,30 +844,28 @@ impl CommandHandler for LoanGoodwillCreditCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let txn_amt_dec = command
             .big_decimal_value_of_parameter_named("transactionAmount")?
             .unwrap_or(Decimal::ZERO);
-        let txn_amt = Money::of(
-            loan.currency.clone(),
-            txn_amt_dec,
-            FineractRoundingMode::HalfEven,
-        );
 
-        let tx = loan.apply_goodwill_credit(txn_date, txn_amt, txn_date)?;
+        let tx = loan.apply_goodwill_credit(txn_date, txn_amt_dec)?;
         let journals = self.accounting_bridge.generate_entries_for_transaction(
             &loan,
             &tx,
             AccountingRuleType::AccrualPeriodic,
-            LoanTransactionAccountingType::GoodwillCredit,
+            LoanBridgeTransactionType::GoodwillCredit,
         )?;
         self.repo.append_journal_entries(journals).await?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
-            .with_sub_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
+            .with_sub_resource_id(tx_id)
             .build())
     }
 }
@@ -807,10 +876,10 @@ pub struct WaiveLoanInterestCommandHandler {
 
 #[async_trait]
 impl CommandHandler for WaiveLoanInterestCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "WAIVEINTERESTPORTION"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -828,16 +897,18 @@ impl CommandHandler for WaiveLoanInterestCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let amt_dec = command
             .big_decimal_value_of_parameter_named("transactionAmount")?
             .unwrap_or(Decimal::ZERO);
-        let amt = Money::of(loan.currency.clone(), amt_dec, FineractRoundingMode::HalfEven);
-        let tx = loan.waive_interest(txn_date, amt, txn_date)?;
+        let tx = loan.waive_interest(txn_date, amt_dec)?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
             .build())
     }
 }
@@ -849,10 +920,10 @@ pub struct WriteOffLoanCommandHandler {
 
 #[async_trait]
 impl CommandHandler for WriteOffLoanCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "WRITEOFF"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -870,19 +941,22 @@ impl CommandHandler for WriteOffLoanCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
-        let tx = loan.write_off(txn_date, txn_date)?;
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let tx = loan.write_off(txn_date)?;
         let journals = self.accounting_bridge.generate_entries_for_transaction(
             &loan,
             &tx,
             AccountingRuleType::AccrualPeriodic,
-            LoanTransactionAccountingType::WriteOff,
+            LoanBridgeTransactionType::WriteOff,
         )?;
         self.repo.append_journal_entries(journals).await?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
             .build())
     }
 }
@@ -893,10 +967,10 @@ pub struct ChargeOffLoanCommandHandler {
 
 #[async_trait]
 impl CommandHandler for ChargeOffLoanCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "CHARGEOFF"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -914,12 +988,15 @@ impl CommandHandler for ChargeOffLoanCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
-        let tx = loan.charge_off(txn_date, txn_date, LoanChargeOffBehaviour::Regular)?;
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
+        let tx = loan.charge_off(txn_date)?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
             .build())
     }
 }
@@ -931,10 +1008,10 @@ pub struct LoanRecoveryPaymentCommandHandler {
 
 #[async_trait]
 impl CommandHandler for LoanRecoveryPaymentCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "RECOVERYPAYMENT"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "LOAN"
     }
     async fn handle(
@@ -952,23 +1029,25 @@ impl CommandHandler for LoanRecoveryPaymentCommandHandler {
         })?;
         let txn_date = command
             .local_date_value_of_parameter_named("transactionDate")?
-            .unwrap_or(loan.expected_disbursement_date);
+            .or(loan.expected_disbursed_on_date)
+            .unwrap_or_else(|| chrono::Utc::now().date_naive());
         let amt_dec = command
             .big_decimal_value_of_parameter_named("transactionAmount")?
             .unwrap_or(Decimal::ZERO);
-        let amt = Money::of(loan.currency.clone(), amt_dec, FineractRoundingMode::HalfEven);
-        let tx = loan.recover_written_off_balance(txn_date, amt, txn_date)?;
+        let tx = loan.recover_written_off_balance(txn_date, amt_dec)?;
         let journals = self.accounting_bridge.generate_entries_for_transaction(
             &loan,
             &tx,
             AccountingRuleType::AccrualPeriodic,
-            LoanTransactionAccountingType::Recovery,
+            LoanBridgeTransactionType::Recovery,
         )?;
         self.repo.append_journal_entries(journals).await?;
         let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(loan_id);
+        let tx_id = tx.id.unwrap_or(0);
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(saved.id)
-            .with_resource_id(tx.id)
+            .with_loan_id(saved_id)
+            .with_resource_id(tx_id)
             .build())
     }
 }
@@ -979,10 +1058,10 @@ pub struct CreateLoanRescheduleRequestCommandHandler {
 
 #[async_trait]
 impl CommandHandler for CreateLoanRescheduleRequestCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "CREATE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "RESCHEDULELOAN"
     }
     async fn handle(
@@ -1011,24 +1090,20 @@ impl CommandHandler for CreateLoanRescheduleRequestCommandHandler {
         let new_interest_rate =
             command.big_decimal_value_of_parameter_named("newInterestRate")?;
 
-        let req = LoanRescheduleRequest {
-            id: 0,
+        let inst_num = command
+            .integer_value_of_parameter_named("rescheduleFromInstallment")?
+            .unwrap_or(1) as u32;
+        let req = LoanRescheduleRequest::new(
+            0,
             loan_id,
-            status_enum: 100, // Submitted
-            reschedule_from_installment: command
-                .integer_value_of_parameter_named("rescheduleFromInstallment")?
-                .map(|v| v as u32),
+            inst_num,
             reschedule_from_date,
             adjusted_due_date,
             extra_terms,
             grace_on_principal,
             grace_on_interest,
             new_interest_rate,
-            recalculate_interest: true,
-            submitted_on_date: reschedule_from_date,
-            approved_on_date: None,
-            rejected_on_date: None,
-        };
+        );
         let saved = self.repo.save_reschedule_request(req).await?;
         Ok(CommandProcessingResultBuilder::new()
             .with_loan_id(loan_id)
@@ -1043,10 +1118,10 @@ pub struct ApproveLoanRescheduleRequestCommandHandler {
 
 #[async_trait]
 impl CommandHandler for ApproveLoanRescheduleRequestCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "APPROVE"
     }
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "RESCHEDULELOAN"
     }
     async fn handle(
@@ -1074,21 +1149,28 @@ impl CommandHandler for ApproveLoanRescheduleRequestCommandHandler {
                 resource_id: req.loan_id.to_string(),
             })?;
 
-        LoanRescheduleEngine::apply_reschedule(
-            &mut loan.installments,
+        let config = LoanRescheduleConfig {
+            currency: loan.currency.clone(),
+            current_nominal_annual_interest_rate: Decimal::from(12),
+            repayment_every: 1,
+            repayment_frequency_type: PeriodFrequencyType::Months,
+            amortization_method: crate::products_and_tranches::AmortizationMethod::EqualInstallments,
+            interest_method: crate::products_and_tranches::InterestMethod::DecliningBalance,
+        };
+        let res = LoanRescheduleEngine::apply_reschedule(
+            &loan.installments,
             &req,
-            &loan.currency,
-            loan.annual_nominal_interest_rate,
-            FineractRoundingMode::HalfEven,
+            &config,
         )?;
-        loan.summary = LoanSummary::from_installments(&loan.currency, &loan.installments);
-        req.status_enum = 200; // Approved
-        req.approved_on_date = Some(req.reschedule_from_date);
+        loan.installments = res.installments;
+        loan.summary.update_summary(Decimal::ZERO, &loan.installments, &loan.charges, Decimal::ZERO);
+        req.approve();
         self.repo.save_reschedule_request(req).await?;
-        self.repo.save_loan(loan.clone()).await?;
+        let saved = self.repo.save_loan(loan).await?;
+        let saved_id = saved.id.unwrap_or(0);
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_loan_id(loan.id)
+            .with_loan_id(saved_id)
             .with_resource_id(req_id)
             .build())
     }
@@ -1107,33 +1189,33 @@ mod tests {
 
         // 1. Create Loan Product
         let create_prod = CreateLoanProductCommandHandler { repo: repo.clone() };
-        let prod_cmd = JsonCommand::from_json(
-            Some(1),
+        let mut prod_cmd = JsonCommand::from_json(
             r#"{"name":"Micro Loan","shortName":"ML01","currencyCode":"USD","digitsAfterDecimal":2,"principal":1200,"interestRatePerPeriod":12,"numberOfRepayments":6,"locale":"en"}"#,
         )
         .unwrap();
+        prod_cmd.command_id = Some(1);
         let prod_res = create_prod.handle(&ctx, &prod_cmd).await.unwrap();
         let prod_id = prod_res.resource_id.unwrap();
 
         // 2. Submit Loan Application
         let submit_loan = SubmitLoanApplicationCommandHandler { repo: repo.clone() };
-        let submit_cmd = JsonCommand::from_json(
-            Some(2),
+        let mut submit_cmd = JsonCommand::from_json(
             &format!(
                 r#"{{"clientId":10,"productId":{prod_id},"principal":1200,"interestRatePerPeriod":12,"numberOfRepayments":6,"submittedOnDate":"2026-01-01","expectedDisbursementDate":"2026-01-01","dateFormat":"yyyy-MM-dd","locale":"en"}}"#
             ),
         )
         .unwrap();
+        submit_cmd.command_id = Some(2);
         let submit_res = submit_loan.handle(&ctx, &submit_cmd).await.unwrap();
         let loan_id = submit_res.loan_id.unwrap();
 
         // 3. Approve Loan
         let approve_loan = ApproveLoanApplicationCommandHandler { repo: repo.clone() };
         let mut approve_cmd = JsonCommand::from_json(
-            Some(3),
             r#"{"approvedOnDate":"2026-01-01","dateFormat":"yyyy-MM-dd","locale":"en"}"#,
         )
         .unwrap();
+        approve_cmd.command_id = Some(3);
         approve_cmd.loan_id = Some(loan_id);
         approve_loan.handle(&ctx, &approve_cmd).await.unwrap();
 
@@ -1143,10 +1225,10 @@ mod tests {
             accounting_bridge: bridge.clone(),
         };
         let mut disburse_cmd = JsonCommand::from_json(
-            Some(4),
             r#"{"actualDisbursementDate":"2026-01-01","dateFormat":"yyyy-MM-dd","locale":"en"}"#,
         )
         .unwrap();
+        disburse_cmd.command_id = Some(4);
         disburse_cmd.loan_id = Some(loan_id);
         disburse_loan.handle(&ctx, &disburse_cmd).await.unwrap();
 
@@ -1154,18 +1236,18 @@ mod tests {
         assert_eq!(loan_after_disb.status, LoanStatus::Active);
 
         // 5. Make Repayment + Goodwill Credit to pay off full balance
-        let total_due = loan_after_disb.summary.total_outstanding.amount();
+        let total_due = loan_after_disb.summary.total_outstanding;
         let repay_handler = LoanRepaymentCommandHandler {
             repo: repo.clone(),
             accounting_bridge: bridge.clone(),
         };
         let mut repay_cmd = JsonCommand::from_json(
-            Some(5),
             &format!(
                 r#"{{"transactionDate":"2026-02-01","transactionAmount":500,"dateFormat":"yyyy-MM-dd","locale":"en"}}"#
             ),
         )
         .unwrap();
+        repay_cmd.command_id = Some(5);
         repay_cmd.loan_id = Some(loan_id);
         repay_handler.handle(&ctx, &repay_cmd).await.unwrap();
 
@@ -1175,12 +1257,12 @@ mod tests {
             accounting_bridge: bridge.clone(),
         };
         let mut gw_cmd = JsonCommand::from_json(
-            Some(6),
             &format!(
                 r#"{{"transactionDate":"2026-02-15","transactionAmount":{remaining},"dateFormat":"yyyy-MM-dd","locale":"en"}}"#
             ),
         )
         .unwrap();
+        gw_cmd.command_id = Some(6);
         gw_cmd.loan_id = Some(loan_id);
         goodwill_handler.handle(&ctx, &gw_cmd).await.unwrap();
 

@@ -5,6 +5,7 @@
 //! - `org.apache.fineract.infrastructure.core.api.JsonCommand`
 
 use std::collections::HashMap;
+use crate::ExternalId;
 use std::fmt;
 use std::str::FromStr;
 
@@ -1260,9 +1261,27 @@ pub struct JsonCommand {
     pub client_id: Option<i64>,
     pub loan_id: Option<i64>,
     pub savings_id: Option<i64>,
+    pub resource_external_id: Option<ExternalId>,
 }
 
 impl JsonCommand {
+    /// Creates a [`JsonCommand`] from raw JSON and an optional entity ID without failing on malformed JSON.
+    pub fn from_raw(raw_json: impl Into<String>, entity_id: Option<i64>) -> Self {
+        let raw_json = raw_json.into();
+        let parsed = serde_json::from_str(&raw_json).unwrap_or(Value::Null);
+        Self {
+            command_id: None,
+            raw_json,
+            parsed,
+            entity_id,
+            subresource_id: None,
+            client_id: None,
+            loan_id: None,
+            savings_id: None,
+            resource_external_id: None,
+        }
+    }
+
     /// Creates a new [`JsonCommand`] with all resource identifiers explicitly populated.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -1284,6 +1303,7 @@ impl JsonCommand {
             client_id,
             loan_id,
             savings_id,
+            resource_external_id: None,
         }
     }
 
@@ -1315,6 +1335,7 @@ impl JsonCommand {
             client_id: None,
             loan_id: None,
             savings_id: None,
+            resource_external_id: None,
         })
     }
 
@@ -1330,6 +1351,7 @@ impl JsonCommand {
             client_id: None,
             loan_id: None,
             savings_id: None,
+            resource_external_id: None,
         }
     }
 
@@ -1361,6 +1383,14 @@ impl JsonCommand {
     pub fn with_savings_id(mut self, savings_id: i64) -> Self {
         self.savings_id = Some(savings_id);
         self
+    }
+
+    pub fn entity_id(&self) -> Option<i64> {
+        self.entity_id
+    }
+
+    pub fn command_id(&self) -> Option<i64> {
+        self.command_id
     }
 
     /// Returns the raw JSON string (`JsonCommand.json()`).

@@ -47,9 +47,11 @@ pub enum CalendarError {
 }
 
 /// Calendar recurrence frequency (`CalendarFrequencyType.java`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[repr(u8)]
 pub enum CalendarFrequencyType {
+    #[default]
+    Invalid = 0,
     Daily = 1,
     Weekly = 2,
     Monthly = 3,
@@ -59,6 +61,7 @@ pub enum CalendarFrequencyType {
 impl CalendarFrequencyType {
     pub const fn from_int(value: i32) -> Option<Self> {
         match value {
+            0 => Some(Self::Invalid),
             1 => Some(Self::Daily),
             2 => Some(Self::Weekly),
             3 => Some(Self::Monthly),
@@ -73,6 +76,7 @@ impl CalendarFrequencyType {
 
     pub const fn code(self) -> &'static str {
         match self {
+            Self::Invalid => "calendarFrequencyType.invalid",
             Self::Daily => "calendarFrequencyType.daily",
             Self::Weekly => "calendarFrequencyType.weekly",
             Self::Monthly => "calendarFrequencyType.monthly",
@@ -82,6 +86,7 @@ impl CalendarFrequencyType {
 
     pub const fn as_rrule_str(self) -> &'static str {
         match self {
+            Self::Invalid => "INVALID",
             Self::Daily => "DAILY",
             Self::Weekly => "WEEKLY",
             Self::Monthly => "MONTHLY",
@@ -103,6 +108,14 @@ impl CalendarFrequencyType {
 
     pub const fn is_yearly(self) -> bool {
         matches!(self, Self::Yearly)
+    }
+
+    pub const fn is_invalid(self) -> bool {
+        matches!(self, Self::Invalid)
+    }
+
+    pub const fn is_valid(self) -> bool {
+        !matches!(self, Self::Invalid)
     }
 }
 
@@ -595,6 +608,7 @@ impl RecurrenceRule {
     /// Generates a human-readable description matching `CalendarUtils.getRRuleReadable`.
     pub fn human_readable(&self, start_date: NaiveDate) -> String {
         let mut out = match self.frequency {
+            CalendarFrequencyType::Invalid => "Invalid".to_string(),
             CalendarFrequencyType::Daily => {
                 if self.interval == 1 {
                     "Daily".to_string()
@@ -802,6 +816,57 @@ impl HolidayRule {
 pub struct CalendarUtils;
 
 impl CalendarUtils {
+    /// Returns total number of days in `year` (366 for leap years, 365 otherwise).
+    #[inline]
+    pub const fn days_in_year(year: i32) -> i64 {
+        if is_leap_year(year) {
+            366
+        } else {
+            365
+        }
+    }
+
+    /// Returns the number of days between two dates (`to - from`).
+    #[inline]
+    pub fn days_between(from: NaiveDate, to: NaiveDate) -> i64 {
+        (to - from).num_days()
+    }
+
+    /// Adds a calendar period (`interval` periods of `frequency_type`) to `date`.
+    pub fn add_period(
+        date: NaiveDate,
+        frequency_type: CalendarFrequencyType,
+        interval: i32,
+        seed_day: Option<u32>,
+    ) -> NaiveDate {
+        match frequency_type {
+            CalendarFrequencyType::Invalid => date,
+            CalendarFrequencyType::Daily => {
+                date.checked_add_signed(Duration::days(interval as i64)).unwrap_or(date)
+            }
+            CalendarFrequencyType::Weekly => {
+                date.checked_add_signed(Duration::days(interval as i64 * 7)).unwrap_or(date)
+            }
+            CalendarFrequencyType::Monthly => {
+                if let Some((target_year, target_month)) =
+                    add_year_month(date.year(), date.month(), interval as i64)
+                {
+                    let max_day = days_in_year_month(target_year, target_month);
+                    let target_day = seed_day.unwrap_or_else(|| date.day()).min(max_day);
+                    NaiveDate::from_ymd_opt(target_year, target_month, target_day).unwrap_or(date)
+                } else {
+                    date
+                }
+            }
+            CalendarFrequencyType::Yearly => {
+                let target_year = date.year().saturating_add(interval);
+                let target_month = date.month();
+                let max_day = days_in_year_month(target_year, target_month);
+                let target_day = seed_day.unwrap_or_else(|| date.day()).min(max_day);
+                NaiveDate::from_ymd_opt(target_year, target_month, target_day).unwrap_or(date)
+            }
+        }
+    }
     /// Generates up to `count` recurring dates on or after `start_date` (and on or after `seed_date`),
     /// preserving Fineract's end-of-month / 29th-30th-31st seed date anchoring.
     ///
@@ -855,6 +920,7 @@ impl CalendarUtils {
         };
 
         match rrule.frequency {
+            CalendarFrequencyType::Invalid => {}
             CalendarFrequencyType::Daily => {
                 let step_days = i64::from(interval);
                 let mut step_index: i64 = if max_total_occurrences.is_none() && effective_start > seed_date

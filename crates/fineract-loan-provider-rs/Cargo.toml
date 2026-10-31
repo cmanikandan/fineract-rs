@@ -13,6 +13,9 @@ fineract-loan-rs = { workspace = true }
 fineract-loan-origination-rs = { workspace = true }
 fineract-collateral-rs = { workspace = true }
 fineract-accounting-rs = { workspace = true }
+fineract-savings-rs = { workspace = true }
+fineract-charge-rs = { workspace = true }
+fineract-schedule-engine = { workspace = true }
 fineract-command-rs = { workspace = true }
 tokio = { workspace = true }
 axum = { workspace = true }

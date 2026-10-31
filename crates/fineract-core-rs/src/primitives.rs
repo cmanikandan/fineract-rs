@@ -81,6 +81,12 @@ impl ExternalId {
     }
 
     /// Returns the underlying string slice if present, matching `ExternalId.getValue()`.
+        /// Returns the underlying string slice if present, matching `ExternalId.as_str()`.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        self.0.as_deref()
+    }
+
     pub fn value(&self) -> Option<&str> {
         self.0.as_deref()
     }
@@ -335,7 +341,7 @@ impl<Change> Default for DomainDelta<Change> {
 
 impl<Change> DomainDelta<Change> {
     /// Creates an empty [`DomainDelta`].
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             mutations: Vec::new(),
             changes: Vec::new(),
@@ -344,7 +350,7 @@ impl<Change> DomainDelta<Change> {
     }
 
     /// Creates an empty [`DomainDelta`].
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self::new()
     }
 
@@ -470,5 +476,23 @@ mod tests {
         assert!(delta.mutations[0].is_insert());
         assert!(delta.mutations[1].is_update());
         assert!(delta.mutations[2].is_delete());
+    }
+}
+
+/// Standard Fineract `EnumOptionData` payload `{ id, code, value }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct EnumOptionData {
+    pub id: i64,
+    pub code: String,
+    pub value: String,
+}
+
+impl EnumOptionData {
+    pub fn new(id: i64, code: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            id,
+            code: code.into(),
+            value: value.into(),
+        }
     }
 }

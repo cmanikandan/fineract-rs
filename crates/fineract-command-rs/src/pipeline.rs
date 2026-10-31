@@ -561,12 +561,21 @@ pub struct CommandProcessingResult {
     pub sub_resource_external_id: Option<ExternalId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rollback_transaction: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_identifier: Option<String>,
 }
 
 impl CommandProcessingResult {
     /// Creates an empty [`CommandProcessingResult`] matching `CommandProcessingResult.empty()`.
     pub fn empty() -> Self {
         Self::default()
+    }
+
+    pub fn from_resource_id(id: i64) -> Self {
+        Self {
+            resource_id: Some(id),
+            ..Self::default()
+        }
     }
 
     /// Creates a result containing only `command_id` matching `CommandProcessingResult.commandOnlyResult(commandId)`.
@@ -723,6 +732,11 @@ impl CommandProcessingResultBuilder {
         self
     }
 
+        #[inline]
+    pub fn with_entity_id_opt(self, id: Option<i64>) -> Self {
+        self.with_resource_id_opt(id)
+    }
+
     pub fn with_resource_id(mut self, entity_id: i64) -> Self {
         self.resource_id = Some(entity_id);
         self
@@ -840,6 +854,7 @@ impl CommandProcessingResultBuilder {
             } else {
                 None
             },
+            resource_identifier: None,
         }
     }
 }
@@ -850,6 +865,14 @@ impl CommandProcessingResultBuilder {
 /// `org.apache.fineract.command.core.CommandHandler`.
 #[async_trait]
 pub trait CommandHandler: Send + Sync {
+    fn action_name(&self) -> &'static str {
+        ""
+    }
+
+    fn entity_name(&self) -> &'static str {
+        ""
+    }
+
     async fn handle(
         &self,
         ctx: &ExecutionContext,
@@ -1088,6 +1111,7 @@ impl IdempotencyMiddleware {
             } else {
                 None
             },
+            resource_identifier: None,
         }
     }
 }
@@ -1534,6 +1558,8 @@ impl CommandPipeline {
             FineractError::DomainRule(_) => 422,
             FineractError::IdempotencyConflict => 425,
             FineractError::DatabaseError(_) => 500,
+            FineractError::Conflict(_) => 409,
+            FineractError::Internal(_) => 500,
         }
     }
 

@@ -17,6 +17,7 @@ pub struct BulkMessageItemV1 {
     /// The fully qualified name of the schema of the event payload. For example org.apache.fineract.avro.loan.v1.LoanAccountDataV1
     pub dataschema: String,
     /// The payload data serialized into Avro bytes
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
 }
 
@@ -59,6 +60,7 @@ pub struct MessageV1 {
     /// The fully qualified name of the schema of the event payload. For example org.apache.fineract.avro.loan.v1.LoanAccountDataV1
     pub dataschema: String,
     /// The payload data serialized into Avro bytes
+    #[serde(with = "serde_bytes")]
     pub data: Vec<u8>,
 }
 

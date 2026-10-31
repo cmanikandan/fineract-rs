@@ -6,6 +6,12 @@ license.workspace = true
 description = "Typed Async Rust HTTP Client SDK for Apache Fineract (replacing fineract-client & fineract-client-feign)"
 
 [dependencies]
+fineract-batch-api-rs = { workspace = true }
+fineract-command-rs = { workspace = true }
+fineract-loan-rs = { workspace = true }
+fineract-loan-provider-rs = { workspace = true }
+fineract-reporting-rs = { workspace = true }
+fineract-server-rs = { workspace = true }
 fineract-core-rs = { workspace = true }
 fineract-money = { workspace = true }
 fineract-validation-rs = { workspace = true }

@@ -404,11 +404,11 @@ impl Group {
 
         if active {
             let act_date = activation_date.ok_or_else(|| {
-                FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+                FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.center.activationDate.cannot.be.blank",
                     "The parameter `activationDate` cannot be blank when `active` is true.",
                     "activationDate",
-                ))
+                    vec![]))
             })?;
             center.activate(act_date, business_date, office_opening_date, None, None)?;
         }
@@ -477,11 +477,11 @@ impl Group {
 
         if active {
             let act_date = activation_date.ok_or_else(|| {
-                FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+                FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.activationDate.cannot.be.blank",
                     "The parameter `activationDate` cannot be blank when `active` is true.",
                     "activationDate",
-                ))
+                    vec![]))
             })?;
             group.activate(
                 act_date,
@@ -643,11 +643,11 @@ impl Group {
         let office_id = match command.long_value_of_parameter_named("officeId")? {
             Some(oid) => oid,
             None => parent_center.map(|c| c.office_id).ok_or_else(|| {
-                FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+                FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.officeId.cannot.be.blank",
                     "The parameter `officeId` cannot be blank.",
                     "officeId",
-                ))
+                    vec![]))
             })?,
         };
         let staff_id = command
@@ -729,12 +729,12 @@ impl Group {
             return Ok(Vec::new());
         }
         let Some(arr) = val.as_array() else {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     format!("validation.msg.group.{param_name}.must.be.array"),
                     format!("The parameter `{param_name}` must be an array."),
                     param_name,
-                ),
+                    vec![]),
             ));
         };
         let mut out = Vec::with_capacity(arr.len());
@@ -743,12 +743,12 @@ impl Group {
                 out.push(id);
             } else if let Some(s) = item.as_str() {
                 let parsed = s.trim().parse::<i64>().map_err(|_| {
-                    FineractError::Validation(
+                    FineractError::DataValidation(
                         PlatformApiDataValidationException::single_parameter_error(
                             format!("validation.msg.group.{param_name}.invalid.integer"),
                             format!("Invalid ID `{s}` in `{param_name}`."),
                             param_name,
-                        ),
+                    vec![]),
                     )
                 })?;
                 out.push(parsed);
@@ -840,7 +840,7 @@ impl Group {
     ) -> FineractResult<()> {
         if self.submitted_on_date > business_date {
             let entity = if self.is_center() { "center" } else { "group" };
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::new(vec![ApiParameterError::parameter_error(
                     format!("error.msg.{entity}.submittedOnDate.in.the.future"),
                     "Submitted on date cannot be in the future.",
@@ -852,7 +852,7 @@ impl Group {
         if let Some(opening_date) = office_opening_date {
             if opening_date > self.submitted_on_date {
                 let entity = if self.is_center() { "center" } else { "group" };
-                return Err(FineractError::Validation(
+                return Err(FineractError::DataValidation(
                     PlatformApiDataValidationException::new(vec![
                         ApiParameterError::parameter_error(
                             format!(
@@ -926,7 +926,7 @@ impl Group {
         let entity = if self.is_center() { "center" } else { "group" };
 
         if self.is_active() {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::new(vec![ApiParameterError::parameter_error(
                     format!("error.msg.{entity}.already.active"),
                     format!(
@@ -984,7 +984,7 @@ impl Group {
         }
 
         if !errors.is_empty() {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::new(errors),
             ));
         }
@@ -1024,11 +1024,12 @@ impl Group {
             .into());
         }
         if client_ids.is_empty() {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.clientMembers.cannot.be.empty",
                     "The parameter `clientMembers` cannot be empty.",
                     "clientMembers",
+                    vec![],
                 ),
             ));
         }
@@ -1068,11 +1069,12 @@ impl Group {
         min_clients: Option<usize>,
     ) -> FineractResult<Vec<i64>> {
         if client_ids.is_empty() {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.clientMembers.cannot.be.empty",
                     "The parameter `clientMembers` cannot be empty.",
                     "clientMembers",
+                    vec![],
                 ),
             ));
         }
@@ -1127,12 +1129,12 @@ impl Group {
         role_cv_id: i32,
     ) -> FineractResult<GroupRole> {
         if role_cv_id <= 0 {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.role.must.be.greater.than.zero",
                     "The parameter `role` must be greater than zero.",
                     "role",
-                ),
+                    vec![]),
             ));
         }
         if !self.has_client_with_id(client_id) {
@@ -1160,7 +1162,7 @@ impl Group {
             Err(FineractError::resource_not_found(
                 "error.msg.group.role.id.invalid",
                 format!("Group role with identifier {role_id} does not exist"),
-                vec![ApiErrorArg::new(role_id)],
+                role_id.to_string(),
             ))
         }
     }
@@ -1183,7 +1185,7 @@ impl Group {
             .into());
         }
         if closure_date > business_date {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::new(vec![ApiParameterError::parameter_error(
                     format!("error.msg.{entity}.closureDate.cannot.be.in.the.future"),
                     "Closure date cannot be in the future.",
@@ -1194,7 +1196,7 @@ impl Group {
         }
         if let Some(act_date) = self.activation_date {
             if closure_date < act_date {
-                return Err(FineractError::Validation(
+                return Err(FineractError::DataValidation(
                     PlatformApiDataValidationException::new(vec![
                         ApiParameterError::parameter_error(
                             format!("error.msg.{entity}.closureDate.cannot.be.before.activationDate"),
@@ -1412,8 +1414,8 @@ impl Calendar {
     pub fn is_valid_recurring_date(
         &self,
         target_date: NaiveDate,
-        is_skip_repayment_on_first_month: bool,
-        number_of_days: u32,
+        _is_skip_repayment_on_first_month: bool,
+        _number_of_days: u32,
     ) -> bool {
         if !self.repeating {
             return target_date == self.start_date;
@@ -1430,8 +1432,6 @@ impl Calendar {
             rule,
             self.start_date,
             target_date,
-            is_skip_repayment_on_first_month,
-            number_of_days,
         )
     }
 }
@@ -1505,8 +1505,8 @@ impl CalendarInstance {
     pub fn is_valid_recurring_date(
         &self,
         target_date: NaiveDate,
-        is_skip_repayment_on_first_month: bool,
-        number_of_days: u32,
+        _is_skip_repayment_on_first_month: bool,
+        _number_of_days: u32,
     ) -> bool {
         if !self.repeating {
             return target_date == self.start_date;
@@ -1523,8 +1523,6 @@ impl CalendarInstance {
             rule,
             self.start_date,
             target_date,
-            is_skip_repayment_on_first_month,
-            number_of_days,
         )
     }
 
@@ -1771,16 +1769,22 @@ impl Meeting {
             .long_greater_than_zero();
 
         if let Some(Value::Array(arr)) = command.json_element("clientsAttendance") {
+            let params: Vec<(String, String)> = (0..arr.len())
+                .map(|idx| (
+                    format!("clientsAttendance[{idx}].clientId"),
+                    format!("clientsAttendance[{idx}].attendanceType"),
+                ))
+                .collect();
             let mut v = validator;
             for (idx, elem) in arr.iter().enumerate() {
                 let cid = elem.get("clientId").and_then(|val| val.as_i64());
                 let att = elem.get("attendanceType").and_then(|val| val.as_i64());
                 v = v
-                    .parameter(&format!("clientsAttendance[{idx}].clientId"))
+                    .parameter(&params[idx].0)
                     .value(cid)
                     .not_null()
                     .long_greater_than_zero()
-                    .parameter(&format!("clientsAttendance[{idx}].attendanceType"))
+                    .parameter(&params[idx].1)
                     .value(att)
                     .not_null()
                     .in_min_max_range(1, 5);
@@ -1801,12 +1805,12 @@ impl Meeting {
     ) -> FineractResult<()> {
         for mut att in attendances {
             if att.attendance_type.is_invalid() {
-                return Err(FineractError::Validation(
+                return Err(FineractError::DataValidation(
                     PlatformApiDataValidationException::single_parameter_error(
                         "validation.msg.meeting.attendanceType.invalid",
                         "Attendance type is invalid.",
                         "attendanceType",
-                    ),
+                    vec![]),
                 ));
             }
             if self
@@ -2047,12 +2051,12 @@ impl PaymentDetail {
             return Ok(None);
         };
         if payment_type_id <= 0 {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.paymentdetail.paymentTypeId.must.be.greater.than.zero",
                     "The parameter `paymentTypeId` must be greater than zero.",
                     "paymentTypeId",
-                ),
+                    vec![]),
             ));
         }
         Ok(Some(Self {
@@ -2783,7 +2787,7 @@ impl DualDbGroupAndPortfolioRepository {
             FineractError::resource_not_found(
                 "error.msg.group.id.invalid",
                 format!("Group with identifier {id} does not exist"),
-                vec![ApiErrorArg::new(id)],
+                id.to_string(),
             )
         })
     }
@@ -2793,14 +2797,14 @@ impl DualDbGroupAndPortfolioRepository {
             FineractError::resource_not_found(
                 "error.msg.center.id.invalid",
                 format!("Center with identifier {id} does not exist"),
-                vec![ApiErrorArg::new(id)],
+                id.to_string(),
             )
         })?;
         if !group.is_center() {
             return Err(FineractError::resource_not_found(
                 "error.msg.center.id.invalid",
                 format!("Center with identifier {id} does not exist"),
-                vec![ApiErrorArg::new(id)],
+                id.to_string(),
             ));
         }
         Ok(group)
@@ -3276,11 +3280,11 @@ impl CommandHandler for ActivateGroupCommandHandler {
     ) -> Result<CommandProcessingResult, FineractError> {
         command.check_for_unsupported_parameters(GROUP_ACTIVATION_SUPPORTED_PARAMS)?;
         let group_id = command.entity_id.ok_or_else(|| {
-            FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+            FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                 "validation.msg.group.id.cannot.be.blank",
                 "The group `entity_id` is required for activation.",
                 "groupId",
-            ))
+                    vec![]))
         })?;
 
         let activation_date = command.local_date_value_of_parameter_named("activationDate")?;
@@ -3343,20 +3347,22 @@ impl CommandHandler for AssociateClientsToGroupCommandHandler {
     ) -> Result<CommandProcessingResult, FineractError> {
         command.check_for_unsupported_parameters(GROUP_CLIENT_ASSOCIATION_SUPPORTED_PARAMS)?;
         let group_id = command.entity_id.ok_or_else(|| {
-            FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+            FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                 "validation.msg.group.id.cannot.be.blank",
                 "The group `entity_id` is required for associating clients.",
                 "groupId",
+                vec![],
             ))
         })?;
 
         let client_member_ids = Group::extract_id_array(command, "clientMembers")?;
         if client_member_ids.is_empty() {
-            return Err(FineractError::Validation(
+            return Err(FineractError::DataValidation(
                 PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.group.clientMembers.cannot.be.empty",
                     "The parameter `clientMembers` cannot be empty.",
                     "clientMembers",
+                    vec![],
                 ),
             ));
         }
@@ -3431,7 +3437,7 @@ impl CommandHandler for CreateMeetingCommandHandler {
                 FineractError::resource_not_found(
                     "error.msg.calendar.instance.not.found",
                     format!("Calendar instance for calendar {calendar_id} does not exist"),
-                    vec![ApiErrorArg::new(calendar_id)],
+                    calendar_id.to_string(),
                 )
             })?;
 
@@ -3567,18 +3573,20 @@ impl CommandHandler for CreateNoteCommandHandler {
         // Determine NoteType from command fields or explicit `resourceType` / `noteTypeId`
         let note_type = if let Some(rt) = command.string_value_of_parameter_named("resourceType") {
             NoteType::from_api_url_or_name(&rt).ok_or_else(|| {
-                FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+                FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.note.resourceType.invalid",
                     format!("Unsupported note resourceType `{rt}`."),
                     "resourceType",
+                    vec![],
                 ))
             })?
         } else if let Some(type_id) = command.integer_value_of_parameter_named("noteTypeId")? {
             NoteType::from_int(type_id).ok_or_else(|| {
-                FineractError::Validation(PlatformApiDataValidationException::single_parameter_error(
+                FineractError::DataValidation(PlatformApiDataValidationException::single_parameter_error(
                     "validation.msg.note.noteTypeId.invalid",
                     format!("Unsupported noteTypeId `{type_id}`."),
                     "noteTypeId",
+                    vec![],
                 ))
             })?
         } else if command.client_id.is_some() {
@@ -3599,11 +3607,12 @@ impl CommandHandler for CreateNoteCommandHandler {
             .or(command.loan_id)
             .or(command.savings_id)
             .ok_or_else(|| {
-                FineractError::Validation(
+                FineractError::DataValidation(
                     PlatformApiDataValidationException::single_parameter_error(
                         "validation.msg.note.resourceId.cannot.be.blank",
                         "Target entity resource ID is required for creating a note.",
                         "resourceId",
+                        vec![],
                     ),
                 )
             })?;

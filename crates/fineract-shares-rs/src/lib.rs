@@ -11,6 +11,13 @@
 //! - `org.apache.fineract.portfolio.shareaccounts.handler.{CreateShareAccountCommandHandler, ApproveShareAccountCommandHandler, ActivateShareAccountCommandHandler, ApplyAddtionalSharesCommandHandler, ApproveAddtionalSharesCommandHandler, RejectAddtionalSharesCommandHandler, RedeemSharesCommandHandler, CloseShareAccountCommandHandler}`
 
 use std::collections::BTreeMap;
+
+fn parse_date_str(s: &str) -> Result<NaiveDate, FineractError> {
+    let clean = s.split('T').next().unwrap_or(s).split(' ').next().unwrap_or(s);
+    NaiveDate::parse_from_str(clean, "%Y-%m-%d")
+        .map_err(|e| FineractError::DatabaseError(format!("Failed to parse date '{s}': {e}")))
+}
+
 use std::fmt;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -2412,7 +2419,7 @@ impl DualDbSharesRepository {
                 sqlx::query(&mp_sql)
                     .bind(mp.id)
                     .bind(product.id)
-                    .bind(mp.from_date)
+                    .bind(mp.from_date.to_string())
                     .bind(mp.share_value.to_string())
                     .execute(pool)
                     .await
@@ -2494,9 +2501,10 @@ impl DualDbSharesRepository {
                     let mp_id: i64 = mp_row
                         .try_get("id")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-                    let from_date: NaiveDate = mp_row
+                    let from_date_str: String = mp_row
                         .try_get("from_date")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    let from_date = parse_date_str(&from_date_str)?;
                     let share_val_str: String = mp_row
                         .try_get("share_value")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2654,9 +2662,10 @@ impl DualDbSharesRepository {
                     let t_id: i64 = tr
                         .try_get("id")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-                    let t_date: NaiveDate = tr
+                    let t_date_str: String = tr
                         .try_get("transaction_date")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                    let t_date = parse_date_str(&t_date_str)?;
                     let t_shares: Option<i64> = tr
                         .try_get("total_shares")
                         .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
@@ -2759,8 +2768,8 @@ impl DualDbSharesRepository {
                 .bind(payout.id)
                 .bind(payout.product_id)
                 .bind(payout.amount.to_string())
-                .bind(payout.dividend_period_start_date)
-                .bind(payout.dividend_period_end_date)
+                .bind(payout.dividend_period_start_date.to_string())
+                .bind(payout.dividend_period_end_date.to_string())
                 .bind(payout.status.value())
                 .execute(pool)
                 .await

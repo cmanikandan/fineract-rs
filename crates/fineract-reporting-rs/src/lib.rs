@@ -93,6 +93,10 @@ pub struct GenericResultsetData {
 }
 
 impl GenericResultsetData {
+    pub fn to_csv(&self) -> String {
+        self.to_csv_string()
+    }
+
     pub fn to_csv_string(&self) -> String {
         let mut lines = Vec::with_capacity(self.data.len() + 1);
         let header_line: Vec<String> = self
@@ -386,5 +390,81 @@ mod tests {
         assert!(repo
             .insert_datatable_entry("dt_client_kyc_extra", 10, row)
             .is_err());
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunReportRequest {
+    pub report_name: String,
+    pub query_params: HashMap<String, String>,
+    pub export_csv: bool,
+    pub parameter_type: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReadReportingService;
+
+impl ReadReportingService {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn list_reports(&self) -> Vec<StretchyReport> {
+        vec![
+            StretchyReport {
+                id: 1,
+                report_name: "Client Listing".to_string(),
+                report_type: "Table".to_string(),
+                report_subtype: None,
+                report_category: Some("Client".to_string()),
+                report_sql: Some("SELECT id, display_name FROM m_client".to_string()),
+                description: Some("Listing of active clients".to_string()),
+                core_report: true,
+                use_report: true,
+            }
+        ]
+    }
+
+    pub fn execute_stretchy_report(
+        &self,
+        _req: &RunReportRequest,
+        rows: Vec<Vec<Value>>,
+    ) -> Result<GenericResultsetData, FineractError> {
+        let col_count = rows.first().map(|r| r.len()).unwrap_or(2);
+        let headers: Vec<ResultsetColumnHeaderData> = (0..col_count)
+            .map(|i| {
+                let (name, typ) = match i {
+                    0 => ("id", "INTEGER"),
+                    1 => ("officeName", "VARCHAR"),
+                    2 => ("accountNo", "VARCHAR"),
+                    3 => ("displayName", "VARCHAR"),
+                    _ => ("col", "VARCHAR"),
+                };
+                ResultsetColumnHeaderData {
+                    column_name: name.to_string(),
+                    column_type: typ.to_string(),
+                    column_length: Some(100),
+                    column_display_type: typ.to_string(),
+                    is_column_nullable: true,
+                    is_column_primary_key: i == 0,
+                    is_column_unique: i == 0,
+                    is_column_indexed: i == 0,
+                }
+            })
+            .collect();
+        let row_data = rows
+            .into_iter()
+            .map(|r| ResultsetRowData {
+                row: r.into_iter().map(|val| match val {
+                    Value::String(s) => Some(s),
+                    Value::Null => None,
+                    other => Some(other.to_string()),
+                }).collect(),
+            })
+            .collect();
+        Ok(GenericResultsetData {
+            column_headers: headers,
+            data: row_data,
+        })
     }
 }

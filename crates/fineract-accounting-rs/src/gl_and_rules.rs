@@ -1952,9 +1952,14 @@ impl DualDbGlMetadataRepository {
             office_id: row
                 .try_get("office_id")
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?,
-            closing_date: row
-                .try_get("closing_date")
-                .map_err(|e| FineractError::DatabaseError(e.to_string()))?,
+            closing_date: {
+                let s: String = row
+                    .try_get("closing_date")
+                    .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+                let part = s.split(|c: char| c == ' ' || c == 'T').next().unwrap_or(&s);
+                NaiveDate::parse_from_str(part, "%Y-%m-%d")
+                    .unwrap_or_else(|_| NaiveDate::from_ymd_opt(1970, 1, 1).unwrap())
+            },
             is_deleted: row
                 .try_get("is_deleted")
                 .map_err(|e| FineractError::DatabaseError(e.to_string()))?,
@@ -2211,7 +2216,7 @@ impl DualDbGlMetadataRepository {
             let res = sqlx::query(&sql)
                 .bind(closure.id)
                 .bind(closure.office_id)
-                .bind(closure.closing_date)
+                .bind(closure.closing_date.to_string())
                 .bind(closure.is_deleted)
                 .bind(&closure.comments)
                 .execute(pool)

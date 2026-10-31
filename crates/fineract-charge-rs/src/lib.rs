@@ -2536,18 +2536,18 @@ impl CreateChargeDefinitionCommandHandler {
 
 #[async_trait]
 impl CommandHandler for CreateChargeDefinitionCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "CREATE"
     }
 
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "CHARGE"
     }
 
-    async fn process_command(
+    async fn handle(
         &self,
-        command: &JsonCommand,
         _context: &ExecutionContext,
+        command: &JsonCommand,
     ) -> Result<CommandProcessingResult, FineractError> {
         let charge = Charge::from_json(0, command)?;
         let saved = self.repository.insert(charge).await?;
@@ -2572,18 +2572,18 @@ impl UpdateChargeDefinitionCommandHandler {
 
 #[async_trait]
 impl CommandHandler for UpdateChargeDefinitionCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "UPDATE"
     }
 
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "CHARGE"
     }
 
-    async fn process_command(
+    async fn handle(
         &self,
-        command: &JsonCommand,
         _context: &ExecutionContext,
+        command: &JsonCommand,
     ) -> Result<CommandProcessingResult, FineractError> {
         let charge_id = command
             .entity_id
@@ -2620,18 +2620,18 @@ impl DeleteChargeDefinitionCommandHandler {
 
 #[async_trait]
 impl CommandHandler for DeleteChargeDefinitionCommandHandler {
-    fn action_name(&self) -> &str {
+    fn action_name(&self) -> &'static str {
         "DELETE"
     }
 
-    fn entity_name(&self) -> &str {
+    fn entity_name(&self) -> &'static str {
         "CHARGE"
     }
 
-    async fn process_command(
+    async fn handle(
         &self,
-        command: &JsonCommand,
         _context: &ExecutionContext,
+        command: &JsonCommand,
     ) -> Result<CommandProcessingResult, FineractError> {
         let charge_id = command
             .entity_id
@@ -3127,7 +3127,7 @@ mod tests {
         .with_command_id(101);
 
         let create_res = create_handler
-            .process_command(&create_cmd, &ctx)
+            .handle(&ctx, &create_cmd)
             .await
             .expect("create charge should succeed");
         let charge_id = create_res.resource_id.expect("resource_id present");
@@ -3155,7 +3155,7 @@ mod tests {
         .with_command_id(102);
 
         let update_res = update_handler
-            .process_command(&update_cmd, &ctx)
+            .handle(&ctx, &update_cmd)
             .await
             .expect("update charge should succeed");
         assert!(update_res.has_changes());
@@ -3171,7 +3171,7 @@ mod tests {
         // Soft-delete charge
         let delete_cmd = JsonCommand::from_value(Some(charge_id), json!({})).with_command_id(103);
         let delete_res = delete_handler
-            .process_command(&delete_cmd, &ctx)
+            .handle(&ctx, &delete_cmd)
             .await
             .expect("delete charge should succeed");
         assert_eq!(delete_res.resource_id, Some(charge_id));

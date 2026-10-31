@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use fineract_client_rs::FineractClient;
 use fineract_core_rs::{BusinessDateType, FineractError};
-use fineract_loan_rs::{LoanAccount, LoanStatus};
+use fineract_loan_rs::{LoanAggregate, LoanStatus};
 
 /// Gherkin step keyword (`Given`, `When`, `Then`, `And`, `But`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,10 +347,10 @@ impl BddScenarioWorld {
                 .retrieve_one(loan_id)
                 .await
                 .map_err(|e| e.to_string())?;
-            if loan.summary.principal_outstanding != expected {
+            if loan.summary.total_principal_outstanding != expected {
                 return Err(format!(
                     "Expected principal_outstanding {}, got {}",
-                    expected, loan.summary.principal_outstanding
+                    expected, loan.summary.total_principal_outstanding
                 ));
             }
             return Ok(());
@@ -400,6 +400,6 @@ Feature: Loan Lifecycle and Full Payoff
         let mut world = BddScenarioWorld::new();
         let report = world.run_scenario(&scenarios[0]).await;
         assert!(report.passed, "Scenario failed: {:?}", report.failure_reason);
-        assert_eq!(report.executed_steps, 12);
+        assert_eq!(report.executed_steps, 13);
     }
 }

@@ -1817,7 +1817,7 @@ impl InterestRateChartSlab {
     }
 
     #[inline]
-    pub const fn is_periods_same(&self, that: &Self) -> bool {
+    pub fn is_periods_same(&self, that: &Self) -> bool {
         self.from_period == that.from_period && self.to_period == that.to_period
     }
 
@@ -3240,11 +3240,11 @@ impl SavingsProduct {
                         .reset()
                         .parameter("daysToDormancy")
                         .value(dorm)
-                        .integer_greater_than_number(inact);
+                        .integer_greater_than_number(i64::from(inact));
                     b.reset()
                         .parameter("daysToEscheat")
                         .value(esch)
-                        .integer_greater_than_number(dorm)
+                        .integer_greater_than_number(i64::from(dorm))
                 }
                 _ => b,
             }
@@ -3424,9 +3424,21 @@ impl SavingsProduct {
 
     /// Applies an update [`JsonCommand`] to this [`SavingsProduct`], returning changed fields.
     pub fn update(&mut self, command: &JsonCommand) -> FineractResult<BTreeMap<String, Value>> {
-        let mut changes = BTreeMap::new();
-        command.update_string_if_changed("name", &mut self.name, &mut changes);
-        command.update_string_if_changed("shortName", &mut self.short_name, &mut changes);
+        let mut changes_map = std::collections::HashMap::new();
+        if let Some(new_name) = command.update_string_if_changed("name", Some(&self.name), &mut changes_map) {
+            self.name = new_name;
+        }
+        if let Some(new_short_name) = command.update_string_if_changed("shortName", Some(&self.short_name), &mut changes_map) {
+            self.short_name = new_short_name;
+        }
+        if let Some(new_rate) = command.update_decimal_if_changed(
+            "nominalAnnualInterestRate",
+            Some(self.nominal_annual_interest_rate),
+            &mut changes_map,
+        )? {
+            self.nominal_annual_interest_rate = new_rate;
+        }
+        let mut changes: BTreeMap<String, Value> = changes_map.into_iter().collect();
         if command.parameter_exists("description") {
             let new_desc = command.string_value_of_parameter_named("description");
             if new_desc != self.description {
@@ -3437,11 +3449,6 @@ impl SavingsProduct {
                 self.description = new_desc;
             }
         }
-        command.update_decimal_if_changed(
-            "nominalAnnualInterestRate",
-            &mut self.nominal_annual_interest_rate,
-            &mut changes,
-        )?;
         if let Some(comp) =
             command.integer_value_sans_locale_of_parameter_named("interestCompoundingPeriodType")?
         {

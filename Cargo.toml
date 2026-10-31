@@ -40,8 +40,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
-repository = "https://github.com/apache/fineract"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/cmanikandan/fineract-rs"
 
 [workspace.dependencies]
 fineract-avro-rs = { path = "crates/fineract-avro-rs" }
@@ -91,6 +91,7 @@ futures = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order"] }
 apache-avro = { version = "0.17", features = ["snappy"] }
+serde_bytes = "0.11"
 
 # Financial Math, Dates, UUIDs, Regex
 rust_decimal = { version = "1.36", features = ["serde", "serde-with-str", "maths"] }

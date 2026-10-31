@@ -454,12 +454,20 @@ impl DualDbCommandSourceJdbcStore {
     }
 
     fn map_row(row: &sqlx::any::AnyRow) -> Result<CommandSourceRecord, FineractError> {
-        let made_on_naive: NaiveDateTime = row
+        let made_on_str: String = row
             .try_get("made_on_date")
-            .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
-        let checked_on_naive: Option<NaiveDateTime> = row
+            .unwrap_or_else(|_| chrono::Utc::now().to_rfc3339());
+        let made_on_naive = chrono::NaiveDateTime::parse_from_str(&made_on_str, "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| chrono::DateTime::parse_from_rfc3339(&made_on_str).map(|dt| dt.naive_utc()))
+            .unwrap_or_default();
+        let checked_on_str: Option<String> = row
             .try_get("checked_on_date")
-            .map_err(|e| FineractError::DatabaseError(e.to_string()))?;
+            .ok();
+        let checked_on_naive = checked_on_str.as_deref().and_then(|s| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S")
+                .or_else(|_| chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.naive_utc()))
+                .ok()
+        });
 
         Ok(CommandSourceRecord {
             id: row
@@ -583,8 +591,8 @@ impl CommandSourceStore for DualDbCommandSourceJdbcStore {
         record: CommandSourceRecord,
     ) -> Result<CommandSourceRecord, FineractError> {
         let sql = Self::insert_command_source_sql(self.dialect);
-        let made_on_naive = record.made_on_date.naive_utc();
-        let checked_on_naive = record.checked_on_date.map(|dt| dt.naive_utc());
+        let made_on_str = record.made_on_date.to_rfc3339();
+        let checked_on_str = record.checked_on_date.map(|dt| dt.to_rfc3339());
 
         let exec_res = sqlx::query(&sql)
             .bind(record.id)
@@ -600,9 +608,9 @@ impl CommandSourceStore for DualDbCommandSourceJdbcStore {
             .bind(record.subresource_id)
             .bind(&record.command_as_json)
             .bind(record.maker_id)
-            .bind(made_on_naive)
+            .bind(&made_on_str)
             .bind(record.checker_id)
-            .bind(checked_on_naive)
+            .bind(&checked_on_str)
             .bind(record.processing_result_enum)
             .bind(record.product_id)
             .bind(&record.transaction_id)
@@ -645,14 +653,14 @@ impl CommandSourceStore for DualDbCommandSourceJdbcStore {
         subresource_external_id: Option<String>,
     ) -> Result<CommandSourceRecord, FineractError> {
         let sql = Self::update_command_result_sql(self.dialect);
-        let checked_on_naive = checked_on_date.map(|dt| dt.naive_utc());
+        let checked_on_str = checked_on_date.map(|dt| dt.to_rfc3339());
 
         sqlx::query(&sql)
             .bind(processing_result_enum)
             .bind(result_status_code)
             .bind(&result)
             .bind(checker_id)
-            .bind(checked_on_naive)
+            .bind(&checked_on_str)
             .bind(resource_id)
             .bind(subresource_id)
             .bind(&transaction_id)
@@ -855,7 +863,7 @@ impl RingBufferDisruptorExecutor {
         let index_mask = ring_buffer_size - 1;
         let max_batch_size = config.max_batch_size.max(1);
 
-        let mut raw_slots = Vec::with_capacity(ring_buffer_size);
+        let mut raw_slots: Vec<Mutex<Option<DisruptorSlotEvent>>> = Vec::with_capacity(ring_buffer_size);
         for _ in 0..ring_buffer_size {
             raw_slots.push(Mutex::new(None));
         }
@@ -1213,6 +1221,7 @@ mod tests {
                     client_id: Some(10),
                     loan_id: Some(1000 + i),
                     savings_id: None,
+                    resource_external_id: None,
                 };
                 exec.dispatch(ctx, wrapper, cmd, false).await
             }));
@@ -1266,6 +1275,7 @@ mod tests {
             client_id: Some(10),
             loan_id: Some(1001),
             savings_id: None,
+            resource_external_id: None,
         };
         let replayed = async_exec
             .dispatch(ctx, replay_wrapper, replay_cmd, false)

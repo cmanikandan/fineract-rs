@@ -23,7 +23,7 @@ steps:
       - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/fineract-repo/${_SERVICE_NAME}:latest'
       - '--region=${_REGION}'
       - '--platform=managed'
-      - '--allow-unauthenticated'
+      - '--no-allow-unauthenticated'
       - '--memory=512Mi'
       - '--cpu=2'
       - '--port=8443'

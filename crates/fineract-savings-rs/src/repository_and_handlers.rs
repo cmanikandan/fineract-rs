@@ -220,16 +220,13 @@ impl SavingsAccountRepository for InMemorySavingsRepository {
     }
 
     async fn save_product(&self, mut product: SavingsProduct) -> FineractResult<SavingsProduct> {
-        let id = match product.id {
-            Some(existing) if existing > 0 => {
-                self.product_seq.fetch_max(existing + 1, Ordering::SeqCst);
-                existing
-            }
-            _ => {
-                let generated = self.next_product_id();
-                product.id = Some(generated);
-                generated
-            }
+        let id = if product.id > 0 {
+            self.product_seq.fetch_max(product.id + 1, Ordering::SeqCst);
+            product.id
+        } else {
+            let generated = self.next_product_id();
+            product.id = generated;
+            generated
         };
         self.products.insert(id, product.clone());
         Ok(product)
@@ -251,7 +248,7 @@ impl SavingsAccountRepository for InMemorySavingsRepository {
     async fn list_products(&self) -> FineractResult<Vec<SavingsProduct>> {
         let mut out: Vec<SavingsProduct> =
             self.products.iter().map(|e| e.value().clone()).collect();
-        out.sort_by_key(|p| p.id.unwrap_or(0));
+        out.sort_by_key(|p| p.id);
         Ok(out)
     }
 
@@ -652,7 +649,7 @@ impl SavingsAccountRepository for DualDbSavingsRepository {
         if let Some(pool) = &self.pool {
             let sql = self.insert_product_sql();
             let _ = sqlx::query(&sql)
-                .bind(saved.id.unwrap_or(0))
+                .bind(saved.id)
                 .bind(&saved.name)
                 .bind(&saved.short_name)
                 .bind(&saved.description)
@@ -714,7 +711,8 @@ impl SavingsAccountRepository for DualDbSavingsRepository {
                 let currency_code: String =
                     row.try_get("currency_code").unwrap_or_else(|_| "USD".to_string());
                 let currency_digits: i32 = row.try_get("currency_digits").unwrap_or(2);
-                let mut product = SavingsProduct::new(
+                let mut product = SavingsProduct::with_terms(
+                    id,
                     name,
                     short_name,
                     MonetaryCurrency::new(currency_code, currency_digits.max(0) as u32, None),
@@ -723,8 +721,7 @@ impl SavingsAccountRepository for DualDbSavingsRepository {
                     SavingsPostingInterestPeriodType::Monthly,
                     SavingsInterestCalculationType::DailyBalance,
                     SavingsInterestCalculationDaysInYearType::Days365,
-                )
-                .with_id(id);
+                );
                 if let Ok(desc) = row.try_get::<Option<String>, _>("description") {
                     product.description = desc;
                 }
@@ -802,13 +799,13 @@ impl SavingsAccountRepository for DualDbSavingsRepository {
                             .map(|d| d.to_string()),
                     )
                     .bind(saved.summary.interest_posted_till_date.map(|d| d.to_string()))
-                    .bind(saved.id.unwrap_or(0))
+                    .bind(saved.id)
                     .execute(pool)
                     .await;
             } else {
                 let sql = self.insert_account_sql();
                 let _ = sqlx::query(&sql)
-                    .bind(saved.id.unwrap_or(0))
+                    .bind(saved.id)
                     .bind(&saved.account_no)
                     .bind(&saved.external_id)
                     .bind(saved.client_id)
@@ -818,7 +815,7 @@ impl SavingsAccountRepository for DualDbSavingsRepository {
                     .bind(saved.status.as_i32())
                     .bind(saved.sub_status.as_i32())
                     .bind(saved.account_type)
-                    .bind(SavingsDepositAccountType::SavingsDeposit.as_i32())
+                    .bind(DepositAccountType::SavingsDeposit.as_i32())
                     .bind(Some(saved.submitted_on_date.to_string()))
                     .bind(saved.submitted_by_user_id)
                     .bind(saved.approved_on_date.map(|d| d.to_string()))
@@ -1306,13 +1303,16 @@ impl<R: SavingsAccountRepository> SavingsDormancyBatchService<R> {
 
             let days_to_inactive = product
                 .days_to_inactive
-                .or_else(|| account.days_to_inactive.map(i64::from));
+                .or(account.days_to_inactive)
+                .map(i64::from);
             let days_to_dormancy = product
                 .days_to_dormancy
-                .or_else(|| account.days_to_dormancy.map(i64::from));
+                .or(account.days_to_dormancy)
+                .map(i64::from);
             let days_to_escheat = product
                 .days_to_escheat
-                .or_else(|| account.days_to_escheat.map(i64::from));
+                .or(account.days_to_escheat)
+                .map(i64::from);
 
             let target_sub_status = match account.sub_status {
                 SavingsAccountSubStatusEnum::None => {
@@ -1552,7 +1552,7 @@ impl<R: SavingsAccountRepository> SubmitSavingsApplicationCommandHandler<R> {
             account_no,
             client_id,
             group_id,
-            product.id.unwrap_or(product_id),
+            if product.id > 0 { product.id } else { product_id },
             product.currency.clone(),
             nominal_rate,
             submitted_on_date,
@@ -1672,7 +1672,7 @@ impl<R: SavingsAccountRepository> SubmitSavingsApplicationCommandHandler<R> {
 
                     let charge_time = fin_charge_time_from_i32(charge_time_enum);
                     let charge_calc = fin_charge_calc_from_i32(charge_calculation_enum);
-                    let mut charge = SavingsAccountCharge::from_charge_definition(
+                    let mut charge = SavingsAccountCharge::new(
                         Some(self.repo.next_charge_id()),
                         Some(account_id),
                         charge_id,
@@ -1716,13 +1716,11 @@ impl<R: SavingsAccountRepository> SubmitSavingsApplicationCommandHandler<R> {
 }
 
 fn fin_charge_time_from_i32(code: i32) -> fineract_charge_rs::ChargeTimeType {
-    fineract_charge_rs::ChargeTimeType::from_int(code)
-        .unwrap_or(fineract_charge_rs::ChargeTimeType::WithdrawalFee)
+    fineract_charge_rs::ChargeTimeType::from_int(Some(code))
 }
 
 fn fin_charge_calc_from_i32(code: i32) -> fineract_charge_rs::ChargeCalculationType {
-    fineract_charge_rs::ChargeCalculationType::from_int(code)
-        .unwrap_or(fineract_charge_rs::ChargeCalculationType::Flat)
+    fineract_charge_rs::ChargeCalculationType::from_int(Some(code))
 }
 
 #[async_trait]
@@ -2767,7 +2765,8 @@ mod tests {
         let (adapter, mapping) = build_gl_adapter_and_mapping(1);
 
         // 1. Seed a savings product with 12% nominal annual interest rate and Cash-Based GL mapping
-        let mut product = SavingsProduct::new(
+        let mut product = SavingsProduct::with_terms(
+            1,
             "Premier Checking & Savings",
             "PCS1",
             MonetaryCurrency::new("USD", 2, None),
@@ -2776,8 +2775,7 @@ mod tests {
             SavingsPostingInterestPeriodType::Monthly,
             SavingsInterestCalculationType::DailyBalance,
             SavingsInterestCalculationDaysInYearType::Days365,
-        )
-        .with_id(1);
+        );
         product.allow_overdraft = true;
         product.overdraft_limit = Some(dec!(500.00));
         product.nominal_annual_interest_rate_overdraft = Some(dec!(18.0));
@@ -3031,7 +3029,8 @@ mod tests {
         let repo = Arc::new(InMemorySavingsRepository::new());
         let (adapter, mapping) = build_gl_adapter_and_mapping(10);
 
-        let mut product = SavingsProduct::new(
+        let mut product = SavingsProduct::with_terms(
+            10,
             "Dormancy Tracked Savings",
             "DTS1",
             MonetaryCurrency::new("USD", 2, None),
@@ -3040,8 +3039,7 @@ mod tests {
             SavingsPostingInterestPeriodType::Monthly,
             SavingsInterestCalculationType::DailyBalance,
             SavingsInterestCalculationDaysInYearType::Days365,
-        )
-        .with_id(10);
+        );
         product.is_dormancy_tracking_active = true;
         product.days_to_inactive = Some(30);
         product.days_to_dormancy = Some(60);

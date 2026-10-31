@@ -357,7 +357,7 @@ fn pay_installment_component(
         return Decimal::ZERO;
     }
 
-    let available = Money::of(*currency, *remaining, mode).amount();
+    let available = Money::of(currency, *remaining, mode).amount();
     let paid = match component {
         PaymentComponent::Penalty => installment.pay_penalty_charges(transaction_date, available),
         PaymentComponent::Fee => installment.pay_fee_charges(transaction_date, available),
@@ -429,7 +429,7 @@ fn unpay_installment_component(
         return Decimal::ZERO;
     }
 
-    let refund_available = Money::of(*currency, *remaining_refund, mode).amount();
+    let refund_available = Money::of(currency, *remaining_refund, mode).amount();
     let deduct = match component {
         PaymentComponent::Penalty => {
             installment.unpay_penalty_charges(transaction_date, refund_available)
@@ -559,7 +559,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
 
         let tx_date = transaction.transaction_date;
         let tx_id = transaction.id;
-        let mut remaining = Money::of(*currency, transaction.amount, mode).amount();
+        let mut remaining = Money::of(currency, transaction.amount, mode).amount();
         let mut totals = TransactionAllocationTotals::default();
         let mut mappings = Vec::new();
 
@@ -692,7 +692,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
             }
         }
 
-        let overpayment = Money::of(*currency, remaining.max(Decimal::ZERO), mode);
+        let overpayment = Money::of(currency, remaining.max(Decimal::ZERO), mode);
         transaction.update_components(
             totals.principal,
             totals.interest,
@@ -1283,7 +1283,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
 
         let tx_date = transaction.transaction_date;
         let tx_id = transaction.id;
-        let mut remaining = Money::of(*currency, transaction.amount, mode).amount();
+        let mut remaining = Money::of(currency, transaction.amount, mode).amount();
         let mut totals = TransactionAllocationTotals::default();
         let mut mappings = Vec::new();
 
@@ -1325,7 +1325,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
             }
         }
 
-        let overpayment = Money::of(*currency, remaining.max(Decimal::ZERO), mode);
+        let overpayment = Money::of(currency, remaining.max(Decimal::ZERO), mode);
         transaction.update_components(
             totals.principal,
             totals.interest,
@@ -1350,7 +1350,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
         transaction.reset_derived_components();
         let tx_date = transaction.transaction_date;
         let tx_id = transaction.id;
-        let mut remaining = Money::of(*currency, transaction.amount, mode).amount();
+        let mut remaining = Money::of(currency, transaction.amount, mode).amount();
         let mut total_waived = Decimal::ZERO;
         let mut mappings = Vec::new();
 
@@ -1392,7 +1392,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
         transaction.reset_derived_components();
         let tx_date = transaction.transaction_date;
         let tx_id = transaction.id;
-        let mut remaining = Money::of(*currency, transaction.amount, mode).amount();
+        let mut remaining = Money::of(currency, transaction.amount, mode).amount();
         let mut fees_waived = Decimal::ZERO;
         let mut penalties_waived = Decimal::ZERO;
         let mut mappings = Vec::new();
@@ -1513,7 +1513,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
         transaction.reset_derived_components();
         let tx_date = transaction.transaction_date;
         let tx_id = transaction.id;
-        let mut remaining = Money::of(*currency, transaction.amount, mode).amount();
+        let mut remaining = Money::of(currency, transaction.amount, mode).amount();
         let mut totals = TransactionAllocationTotals::default();
         let mut mappings = Vec::new();
 
@@ -1591,7 +1591,7 @@ impl LoanRepaymentScheduleTransactionProcessor {
     ) {
         transaction.reset_derived_components();
         let tx_date = transaction.transaction_date;
-        let amount = Money::of(*currency, transaction.amount, mode).amount();
+        let amount = Money::of(currency, transaction.amount, mode).amount();
         if amount <= Decimal::ZERO {
             return;
         }
@@ -1719,7 +1719,7 @@ impl BackdatedTransactionReplayEngine {
 
         let processor = LoanRepaymentScheduleTransactionProcessor::new(strategy);
         let mut changed_detail = ChangedTransactionDetail::new();
-        let mut total_overpaid = Money::zero(*currency, mode);
+        let mut total_overpaid = Money::zero(currency);
 
         // Total scheduled principal across installments (used to track running principal balance)
         let initial_principal: Decimal = installments.iter().map(|i| i.principal_amount).sum();
@@ -1759,7 +1759,7 @@ impl BackdatedTransactionReplayEngine {
                         mode,
                     );
                     if overpaid.is_greater_than_zero() {
-                        total_overpaid = total_overpaid.plus(overpaid, mode);
+                        total_overpaid = total_overpaid + overpaid;
                     }
                     tx.outstanding_loan_balance =
                         Self::calculate_outstanding_principal(installments);
@@ -1773,7 +1773,7 @@ impl BackdatedTransactionReplayEngine {
                         mode,
                     );
                     if overpaid.is_greater_than_zero() {
-                        total_overpaid = total_overpaid.plus(overpaid, mode);
+                        total_overpaid = total_overpaid + overpaid;
                     }
                     tx.outstanding_loan_balance =
                         Self::calculate_outstanding_principal(installments);
@@ -1791,7 +1791,7 @@ impl BackdatedTransactionReplayEngine {
                 }
                 LoanTransactionType::WriteOff => {
                     processor.process_write_off(tx, installments, currency, mode);
-                    total_overpaid = Money::zero(*currency, mode);
+                    total_overpaid = Money::zero(currency);
                     tx.outstanding_loan_balance = Decimal::ZERO;
                 }
                 LoanTransactionType::ChargeOff => {
@@ -1805,11 +1805,9 @@ impl BackdatedTransactionReplayEngine {
                 }
                 LoanTransactionType::CreditBalanceRefund => {
                     tx.reset_derived_components();
-                    let refund_money = Money::of(*currency, tx.amount, mode);
+                    let refund_money = Money::of(currency, tx.amount, mode);
                     tx.overpayment_portion = refund_money.amount();
-                    total_overpaid = total_overpaid
-                        .minus(refund_money, mode)
-                        .zero_if_negative();
+                    total_overpaid = (total_overpaid - refund_money).zero_if_negative();
                     tx.outstanding_loan_balance =
                         Self::calculate_outstanding_principal(installments);
                 }
@@ -1819,7 +1817,7 @@ impl BackdatedTransactionReplayEngine {
                         Self::calculate_outstanding_principal(installments);
                 }
                 LoanTransactionType::CapitalizedIncome => {
-                    tx.principal_portion = Money::of(*currency, tx.amount, mode).amount();
+                    tx.principal_portion = Money::of(currency, tx.amount, mode).amount();
                     tx.outstanding_loan_balance =
                         Self::calculate_outstanding_principal(installments);
                 }
@@ -1892,12 +1890,13 @@ impl BackdatedTransactionReplayEngine {
         }
 
         let num_installments = installments.len();
+        let down_payment_flags: Vec<bool> = installments.iter().map(|i| i.is_down_payment).collect();
         for (idx, installment) in installments.iter_mut().enumerate() {
             if installment.is_down_payment {
                 continue;
             }
             let is_first_normal = idx == 0
-                || installments[..idx].iter().all(|prev| prev.is_down_payment);
+                || down_payment_flags[..idx].iter().all(|&prev| prev);
             let period_start = installment.from_date.unwrap_or(disbursement_date);
             let period_end = installment.due_date;
 
@@ -1946,11 +1945,11 @@ impl BackdatedTransactionReplayEngine {
                 }
             }
 
-            installment.fee_charges_amount = Money::of(*currency, fee_due, mode).amount();
-            installment.fee_charges_waived = Money::of(*currency, fee_waived, mode).amount();
-            installment.penalty_charges_amount = Money::of(*currency, penalty_due, mode).amount();
+            installment.fee_charges_amount = Money::of(currency, fee_due, mode).amount();
+            installment.fee_charges_waived = Money::of(currency, fee_waived, mode).amount();
+            installment.penalty_charges_amount = Money::of(currency, penalty_due, mode).amount();
             installment.penalty_charges_waived =
-                Money::of(*currency, penalty_waived, mode).amount();
+                Money::of(currency, penalty_waived, mode).amount();
         }
     }
 }

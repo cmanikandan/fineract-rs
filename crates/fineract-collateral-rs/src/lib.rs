@@ -3129,7 +3129,7 @@ mod tests {
         assert!(over_pledge.is_err());
         let err = over_pledge.unwrap_err();
         assert_eq!(
-            err.to_global_error_response().user_message_globalisation_code,
+            err.to_global_error_response().errors[0].user_message_globalisation_code,
             InvalidAmountOfCollateralQuantity::CODE
         );
 

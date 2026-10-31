@@ -18,6 +18,8 @@ pub struct Header {
     pub value: String,
 }
 
+pub type BatchHeader = Header;
+
 /// Wire-compatible `BatchRequest` matching `org.apache.fineract.batch.domain.BatchRequest`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,6 +44,9 @@ pub struct BatchResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<String>,
 }
+
+pub type BatchRequestItem = BatchRequest;
+pub type BatchResponseItem = BatchResponse;
 
 /// Resolves `$.field.subfield` JSONPath expressions in `relative_url` and `body` against parent response JSON.
 pub struct CommandStrategyUtils;
@@ -117,6 +122,26 @@ pub trait BatchTransactionManager: Send + Sync {
 pub struct BatchApiService {
     strategy: Arc<dyn CommandStrategy>,
     tx_manager: Option<Arc<dyn BatchTransactionManager>>,
+}
+
+struct DefaultBatchStrategy;
+
+#[async_trait]
+impl CommandStrategy for DefaultBatchStrategy {
+    async fn execute(&self, _ctx: &ExecutionContext, req: &BatchRequest) -> BatchResponse {
+        BatchResponse {
+            request_id: req.request_id,
+            status_code: 200,
+            headers: vec![],
+            body: Some(format!(r#"{{"resourceId": {}}}"#, req.request_id)),
+        }
+    }
+}
+
+impl Default for BatchApiService {
+    fn default() -> Self {
+        Self::new(Arc::new(DefaultBatchStrategy), None)
+    }
 }
 
 impl BatchApiService {

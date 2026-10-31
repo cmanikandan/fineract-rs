@@ -526,14 +526,25 @@ impl ApiGlobalErrorResponse {
 /// Exception thrown when API request data validation fails.
 ///
 /// Ported from `org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[error("{default_user_message} ({globalisation_message_code})")]
 pub struct PlatformApiDataValidationException {
     pub globalisation_message_code: String,
     pub default_user_message: String,
     pub errors: Vec<ApiParameterError>,
 }
+
+impl std::fmt::Display for PlatformApiDataValidationException {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} ({})", self.default_user_message, self.globalisation_message_code)?;
+        for err in &self.errors {
+            write!(f, ": {} ({})", err.default_user_message, err.user_message_globalisation_code)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for PlatformApiDataValidationException {}
 
 impl PlatformApiDataValidationException {
     /// Creates a [`PlatformApiDataValidationException`] with the standard Fineract validation header.
@@ -559,6 +570,15 @@ impl PlatformApiDataValidationException {
     }
 
     /// Creates a [`PlatformApiDataValidationException`] containing a single parameter error.
+        /// Convenience constructor for a single parameter error with no args.
+    pub fn single_error(
+        message_code: impl Into<String>,
+        user_message: impl Into<String>,
+        parameter_name: impl Into<String>,
+    ) -> Self {
+        Self::single_parameter_error(message_code, user_message, parameter_name, Vec::new())
+    }
+
     pub fn single_parameter_error(
         message_code: impl Into<String>,
         user_message: impl Into<String>,
@@ -606,6 +626,14 @@ pub struct PlatformDomainRuleException {
 pub type GeneralPlatformDomainRuleException = PlatformDomainRuleException;
 
 impl PlatformDomainRuleException {
+    /// Appends a single argument to the exception message arguments.
+    pub fn with_arg(mut self, arg: impl std::fmt::Display) -> Self {
+        self.default_user_message_args.push(ApiErrorArg {
+            value: serde_json::Value::String(arg.to_string()),
+        });
+        self
+    }
+
     /// Creates a new domain rule exception without message arguments.
     pub fn new(
         globalisation_message_code: impl Into<String>,
@@ -668,6 +696,12 @@ pub enum FineractError {
 
     #[error("Database error: {0}")]
     DatabaseError(String),
+
+    #[error("Conflict: {0:?}")]
+    Conflict(ApiGlobalErrorResponse),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 /// Standard `Result` alias using [`FineractError`].
@@ -698,6 +732,18 @@ impl FineractError {
         }
     }
 
+    /// Helper to construct a not-found error with default empty resource ID.
+    pub fn not_found(
+        globalisation_code: impl Into<String>,
+        default_message: impl Into<String>,
+    ) -> Self {
+        Self::ResourceNotFound {
+            globalisation_code: globalisation_code.into(),
+            default_message: default_message.into(),
+            resource_id: String::new(),
+        }
+    }
+
     /// Returns the HTTP status code corresponding to this error.
     pub fn http_status_code(&self) -> u16 {
         match self {
@@ -708,7 +754,19 @@ impl FineractError {
             Self::AccessDenied => 403,
             Self::IdempotencyConflict => 409,
             Self::DatabaseError(_) => 500,
+            Self::Conflict(ref r) => r.http_status_code.parse::<u16>().unwrap_or(409),
+            Self::Internal(_) => 500,
         }
+    }
+
+    /// Alias for http_status_code.
+    pub fn http_status(&self) -> u16 {
+        self.http_status_code()
+    }
+
+    /// Alias for to_global_error_response.
+    pub fn to_api_global_error_response(&self) -> ApiGlobalErrorResponse {
+        self.to_global_error_response()
     }
 
     /// Converts this [`FineractError`] into a wire-compatible [`ApiGlobalErrorResponse`].
@@ -731,6 +789,12 @@ impl FineractError {
             ),
             Self::IdempotencyConflict => ApiGlobalErrorResponse::conflict(Some("command"), None),
             Self::DatabaseError(msg) => ApiGlobalErrorResponse::server_side_error(
+                "error.msg.platform.server.side.error",
+                msg.clone(),
+                Vec::new(),
+            ),
+            Self::Conflict(ref r) => r.clone(),
+            Self::Internal(ref msg) => ApiGlobalErrorResponse::server_side_error(
                 "error.msg.platform.server.side.error",
                 msg.clone(),
                 Vec::new(),
@@ -2615,6 +2679,12 @@ impl<'a> DataValidatorBuilder<'a> {
 
     /// Finishes validation and returns `Ok(())` if no errors were recorded, or
     /// `Err(PlatformApiDataValidationException)` containing all recorded [`ApiParameterError`]s.
+        /// Finishes validation and returns `Ok(())` or `Err(PlatformApiDataValidationException)`.
+    #[inline]
+    pub fn finish(&self) -> Result<(), PlatformApiDataValidationException> {
+        self.into_validation_result()
+    }
+
     pub fn into_validation_result(&self) -> Result<(), PlatformApiDataValidationException> {
         let errors = self.data_validation_errors();
         if errors.is_empty() {

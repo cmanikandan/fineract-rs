@@ -782,7 +782,7 @@ impl InterestPeriod {
             .multiply(FineractDecimal::new(self.rate_factor))
             .raw();
         let interest_money = Money::of(
-            *self.outstanding_loan_balance.currency(),
+            self.outstanding_loan_balance.currency().clone(),
             raw_interest,
             rounding_mode,
         );
@@ -1164,7 +1164,7 @@ impl ProgressiveLoanInterestScheduleModel {
                 "ProgressiveLoanInterestScheduleModel requires at least one repayment period",
             ));
         }
-        let zero = Money::zero(params.currency);
+        let zero = Money::zero(params.currency.clone());
         let mut repayment_periods = Vec::with_capacity(period_dates.len());
         for (idx, &(from_date, due_date)) in period_dates.iter().enumerate() {
             if due_date <= from_date {
@@ -1205,7 +1205,7 @@ impl ProgressiveLoanInterestScheduleModel {
 
     /// Returns the zero [`Money`] value for the schedule's currency.
     pub fn zero(&self) -> Money {
-        Money::zero(self.params.currency)
+        Money::zero(self.params.currency.clone())
     }
 
     /// Returns the nominal annual interest rate effective on `date`.
@@ -1578,6 +1578,9 @@ impl ProgressiveLoanInterestScheduleModel {
                         .plus(&ip.credited_principal)
                         .map_err(money_err)?;
                 }
+                principal_to_amortize = principal_to_amortize
+                    .minus_to_zero(&rp.early_paid_principal)
+                    .map_err(money_err)?;
             }
 
             let rate_factors_plus_1: Vec<Decimal> = self.repayment_periods[start_period_idx..]
@@ -1613,7 +1616,7 @@ impl ProgressiveLoanInterestScheduleModel {
                 let scale = self.params.currency.decimal_places() as u32;
                 let one_cent = Decimal::new(1, scale);
                 let threshold = Money::of(
-                    self.params.currency,
+                    self.params.currency.clone(),
                     one_cent * Decimal::from((remaining_count as i64) / 2 + 1),
                     self.params.rounding_mode,
                 );
@@ -1624,7 +1627,7 @@ impl ProgressiveLoanInterestScheduleModel {
                     };
                     let adjusted_emi = calculated_emi
                         .plus(&Money::of(
-                            self.params.currency,
+                            self.params.currency.clone(),
                             step,
                             self.params.rounding_mode,
                         ))
@@ -1774,7 +1777,7 @@ impl ProgressiveLoanInterestScheduleModel {
         let numerator = FineractDecimal::new(principal.amount()).multiply(rate_factor_n);
         let raw_emi = numerator.divide(fn_result, self.params.rounding_mode).raw();
 
-        let emi = Money::of(self.params.currency, raw_emi, self.params.rounding_mode);
+        let emi = Money::of(self.params.currency.clone(), raw_emi, self.params.rounding_mode);
         let rounded_emi = match self.params.installment_amount_in_multiples_of {
             Some(mult) if mult > 0 => emi.round_to_multiples_of(mult, self.params.rounding_mode),
             _ => emi,

@@ -1673,13 +1673,13 @@ impl UnderwritingScorecardEngine {
     }
 
     fn derive_risk_grade(scorecard_points: Decimal) -> &'static str {
-        if scorecard_points >= dec!(80) {
+        if scorecard_points >= dec!(60) {
             "A"
-        } else if scorecard_points >= dec!(65) {
+        } else if scorecard_points >= dec!(45) {
             "B"
-        } else if scorecard_points >= dec!(50) {
+        } else if scorecard_points >= dec!(30) {
             "C"
-        } else if scorecard_points >= dec!(35) {
+        } else if scorecard_points >= dec!(15) {
             "D"
         } else {
             "E"

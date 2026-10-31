@@ -6,6 +6,7 @@ license.workspace = true
 description = "Read Reporting Engine, Stretchy Reports, Dynamic DataTables (`x_registered_table`), and AdHoc Queries"
 
 [dependencies]
+fineract-command-rs = { workspace = true }
 fineract-core-rs = { workspace = true }
 fineract-money = { workspace = true }
 fineract-validation-rs = { workspace = true }

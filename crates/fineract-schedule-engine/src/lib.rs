@@ -14,7 +14,7 @@ use chrono::{Datelike, NaiveDate};
 use fineract_charge_rs::EnumOptionData;
 use fineract_core_rs::calendar::{CalendarFrequencyType, CalendarUtils};
 use fineract_money::{
-    Decimal, FineractDecimal, FineractRoundingMode, MonetaryCurrency, Money, RoundingStrategy, dec,
+    Decimal, DecimalRoundingExt, FineractDecimal, FineractRoundingMode, MonetaryCurrency, Money, RoundingStrategy, dec,
 };
 use serde::{Deserialize, Serialize};
 
@@ -535,7 +535,7 @@ impl LoanScheduleTerms {
     /// Returns the currency of the loan principal.
     #[inline]
     pub fn currency(&self) -> MonetaryCurrency {
-        self.principal.currency()
+        self.principal.currency().clone()
     }
 }
 
@@ -611,7 +611,7 @@ impl EmbeddableScheduleGenerator {
 
     /// Static entry point to generate a complete loan repayment schedule.
     pub fn generate_schedule(terms: &LoanScheduleTerms) -> GeneratedLoanSchedule {
-        let currency = terms.principal.currency();
+        let currency = terms.principal.currency().clone();
         let zero = Money::zero(currency.clone());
 
         if terms.number_of_repayments == 0 || !terms.principal.is_greater_than_zero() {
@@ -1095,6 +1095,7 @@ impl EmbeddableScheduleGenerator {
         let equal_principal = Money::of(
             currency.clone(),
             amortizable_principal.amount() / Decimal::from(principal_periods),
+            FineractRoundingMode::HalfUp,
         );
 
         let mut deferred_interest = zero.clone();
@@ -1117,7 +1118,7 @@ impl EmbeddableScheduleGenerator {
                 zero.clone()
             } else {
                 let rate = Self::calculate_period_interest_rate(terms, from_date, due_date);
-                Money::of(currency.clone(), amortizable_principal.amount() * rate)
+                Money::of(currency.clone(), amortizable_principal.amount() * rate, FineractRoundingMode::HalfUp)
             };
 
             let interest_amount = if period_num <= interest_payment_grace && !is_last {
@@ -1168,6 +1169,7 @@ impl EmbeddableScheduleGenerator {
         let equal_principal = Money::of(
             currency.clone(),
             amortizable_principal.amount() / Decimal::from(principal_periods),
+            FineractRoundingMode::HalfUp,
         );
 
         let mut deferred_interest = zero.clone();
@@ -1181,7 +1183,7 @@ impl EmbeddableScheduleGenerator {
                 zero.clone()
             } else {
                 let rate = Self::calculate_period_interest_rate(terms, from_date, due_date);
-                Money::of(currency.clone(), outstanding_balance.amount() * rate)
+                Money::of(currency.clone(), outstanding_balance.amount() * rate, FineractRoundingMode::HalfUp)
             };
 
             let interest_amount = if period_num <= interest_payment_grace && !is_last {
@@ -1243,7 +1245,7 @@ impl EmbeddableScheduleGenerator {
             Some(fixed_emi) if fixed_emi > Decimal::ZERO => fixed_emi,
             _ => Self::calculate_pmt(amortizable_principal.amount(), pmt_rate, amortizing_periods),
         };
-        let fixed_emi = Money::of(currency.clone(), raw_emi);
+        let fixed_emi = Money::of(currency.clone(), raw_emi, FineractRoundingMode::HalfUp);
 
         let mut deferred_interest = zero.clone();
 
@@ -1256,7 +1258,7 @@ impl EmbeddableScheduleGenerator {
                 zero.clone()
             } else {
                 let rate = Self::calculate_period_interest_rate(terms, from_date, due_date);
-                Money::of(currency.clone(), outstanding_balance.amount() * rate)
+                Money::of(currency.clone(), outstanding_balance.amount() * rate, FineractRoundingMode::HalfUp)
             };
 
             let interest_amount = if period_num <= interest_payment_grace && !is_last {
@@ -1352,7 +1354,7 @@ mod tests {
         // disbursed on 2024-01-01.
         let usd = MonetaryCurrency::usd();
         let terms = LoanScheduleTerms {
-            principal: Money::of(usd.clone(), dec!(100.00)),
+            principal: Money::of(usd.clone(), dec!(100.00), FineractRoundingMode::HalfUp),
             annual_nominal_interest_rate: dec!(7.0),
             number_of_repayments: 6,
             repayment_every: 1,
@@ -1408,7 +1410,7 @@ mod tests {
         // $100.00 principal, 25% down payment on 2024-01-01 ($25.00), remaining $75.00 over 6 months at 7.0%
         let usd = MonetaryCurrency::usd();
         let terms = LoanScheduleTerms {
-            principal: Money::of(usd, dec!(100.00)),
+            principal: Money::of(usd, dec!(100.00), FineractRoundingMode::HalfUp),
             annual_nominal_interest_rate: dec!(7.0),
             number_of_repayments: 6,
             repayment_every: 1,
@@ -1454,7 +1456,7 @@ mod tests {
     fn test_flat_interest_schedule() {
         let usd = MonetaryCurrency::usd();
         let terms = LoanScheduleTerms {
-            principal: Money::of(usd, dec!(1200.00)),
+            principal: Money::of(usd, dec!(1200.00), FineractRoundingMode::HalfUp),
             annual_nominal_interest_rate: dec!(12.0),
             number_of_repayments: 12,
             repayment_every: 1,
@@ -1492,7 +1494,7 @@ mod tests {
     fn test_declining_balance_equal_principal_and_moratorium() {
         let usd = MonetaryCurrency::usd();
         let terms = LoanScheduleTerms {
-            principal: Money::of(usd, dec!(1000.00)),
+            principal: Money::of(usd, dec!(1000.00), FineractRoundingMode::HalfUp),
             annual_nominal_interest_rate: dec!(12.0),
             number_of_repayments: 5,
             repayment_every: 1,
@@ -1539,7 +1541,7 @@ mod tests {
         let usd = MonetaryCurrency::usd();
         // Jan 1, 2024 to Feb 1, 2024 is 31 days
         let mut terms = LoanScheduleTerms::new(
-            Money::of(usd, dec!(10000.00)),
+            Money::of(usd, dec!(10000.00), FineractRoundingMode::HalfUp),
             dec!(10.0),
             3,
             1,
@@ -1581,7 +1583,7 @@ mod tests {
             down_payment_bps in 100i64..5000i64,
         ) {
             let usd = MonetaryCurrency::usd();
-            let principal = Money::of(usd, Decimal::new(principal_cents, 2));
+            let principal = Money::of(usd, Decimal::new(principal_cents, 2), FineractRoundingMode::HalfUp);
             let annual_rate = Decimal::new(annual_rate_bps, 2);
 
             let amortization_method = match amort_idx {

@@ -5,12 +5,13 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock};
 
 use chrono::NaiveDate;
-use fineract_command_rs::pipeline::{CommandHandler, ExecutionContext};
+use async_trait::async_trait;
+use fineract_command_rs::pipeline::CommandHandler;
+use fineract_core_rs::context::ExecutionContext;
 use fineract_core_rs::db::{DialectSql, SqlDialect};
 use fineract_core_rs::json_command::JsonCommand;
-use fineract_core_rs::primitives::{
-    CommandProcessingResult, CommandProcessingResultBuilder, EnumOptionData,
-};
+use fineract_command_rs::{CommandProcessingResult, CommandProcessingResultBuilder};
+use fineract_core_rs::primitives::EnumOptionData;
 use fineract_money::{FineractDecimal, FineractRoundingMode, MonetaryCurrency, Money};
 use fineract_validation_rs::{DataValidatorBuilder, FineractError};
 use rust_decimal::Decimal;
@@ -354,28 +355,30 @@ impl TaxComponent {
         if command.is_change_in_big_decimal_parameter_named(
             PERCENTAGE_PARAM_NAME,
             Some(self.percentage),
-        ) {
+        )? {
             if let Some(new_pct) =
-                command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)
+                command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)?
             {
                 changes.insert(PERCENTAGE_PARAM_NAME.to_string(), json!(new_pct));
-                if let Some(locale) = command.locale() {
+                let locale = command.locale();
+                if !locale.is_empty() {
                     changes.insert(LOCALE_PARAM_NAME.to_string(), json!(locale));
                 }
 
                 let old_start = self.start_date;
                 let new_start = command
-                    .local_date_value_of_parameter_named(START_DATE_PARAM_NAME)
+                    .local_date_value_of_parameter_named(START_DATE_PARAM_NAME)?
                     .unwrap_or(self.start_date);
 
                 changes.insert(
                     START_DATE_PARAM_NAME.to_string(),
                     json!(new_start.format("%Y-%m-%d").to_string()),
                 );
-                if let Some(df) = command.date_format() {
+                let df = command.date_format();
+                if !df.is_empty() {
                     changes.insert(DATE_FORMAT_PARAM_NAME.to_string(), json!(df));
                 }
-                if let Some(locale) = command.locale() {
+                if !locale.is_empty() {
                     changes.insert(LOCALE_PARAM_NAME.to_string(), json!(locale));
                 }
 
@@ -390,10 +393,10 @@ impl TaxComponent {
                 self.start_date = new_start;
             }
         } else if command
-            .is_change_in_local_date_parameter_named(START_DATE_PARAM_NAME, Some(self.start_date))
+            .is_change_in_local_date_parameter_named(START_DATE_PARAM_NAME, Some(self.start_date))?
         {
             if let Some(new_start) =
-                command.local_date_value_of_parameter_named(START_DATE_PARAM_NAME)
+                command.local_date_value_of_parameter_named(START_DATE_PARAM_NAME)?
             {
                 changes.insert(
                     START_DATE_PARAM_NAME.to_string(),
@@ -740,7 +743,7 @@ impl TaxUtil {
             return Ok((base_amount.clone(), splits));
         }
         let total_tax = Self::total_tax_amount(base_amount.currency(), &splits, mode);
-        let gross = base_amount.plus(&total_tax, mode)?;
+        let gross = base_amount.plus(&total_tax).map_err(|e| FineractError::domain_rule("error.msg.money.calculation", e.to_string()))?;
         Ok((gross, splits))
     }
 }
@@ -752,84 +755,77 @@ impl TaxValidator {
     /// Validates a `CREATE TAXCOMPONENT` command.
     pub fn validate_for_tax_component_create(command: &JsonCommand) -> Result<(), FineractError> {
         use tax_api_constants::*;
-        let mut errors = Vec::new();
-        let mut base = DataValidatorBuilder::new(&mut errors).resource("tax.component");
+        let validator = DataValidatorBuilder::for_resource("tax.component");
 
-        base.reset()
+        validator
+            .reset()
             .parameter(NAME_PARAM_NAME)
             .value(command.string_value_of_parameter_named(NAME_PARAM_NAME))
             .not_blank();
 
-        let percentage = command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME);
-        base.reset()
+        let percentage = command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)?;
+        validator
+            .reset()
             .parameter(PERCENTAGE_PARAM_NAME)
             .value(percentage)
             .not_null()
             .positive_amount()
             .not_greater_than_max(HUNDRED);
 
-        let debit_type = command.integer_value_of_parameter_named(DEBIT_ACCOUNT_TYPE_PARAM_NAME);
-        base.reset()
+        let debit_type = command.integer_value_of_parameter_named(DEBIT_ACCOUNT_TYPE_PARAM_NAME)?;
+        validator
+            .reset()
             .parameter(DEBIT_ACCOUNT_TYPE_PARAM_NAME)
             .value(debit_type)
             .ignore_if_null()
             .is_one_of_these_values(&[1, 2, 3, 4, 5]);
 
-        let credit_type = command.integer_value_of_parameter_named(CREDIT_ACCOUNT_TYPE_PARAM_NAME);
-        base.reset()
+        let credit_type = command.integer_value_of_parameter_named(CREDIT_ACCOUNT_TYPE_PARAM_NAME)?;
+        validator
+            .reset()
             .parameter(CREDIT_ACCOUNT_TYPE_PARAM_NAME)
             .value(credit_type)
             .ignore_if_null()
             .is_one_of_these_values(&[1, 2, 3, 4, 5]);
 
-        let debit_id = command.long_value_of_parameter_named(DEBIT_ACCOUNT_ID_PARAM_NAME);
+        let debit_id = command.long_value_of_parameter_named(DEBIT_ACCOUNT_ID_PARAM_NAME)?;
         if debit_type.is_some() {
-            base.reset()
+            validator
+                .reset()
                 .parameter(DEBIT_ACCOUNT_ID_PARAM_NAME)
                 .value(debit_id)
                 .not_null();
-        } else {
-            base.reset()
-                .parameter(DEBIT_ACCOUNT_ID_PARAM_NAME)
-                .value(debit_id)
-                .must_be_blank_when_parameter_provided_is(DEBIT_ACCOUNT_TYPE_PARAM_NAME, debit_type);
         }
 
-        let credit_id = command.long_value_of_parameter_named(CREDIT_ACCOUNT_ID_PARAM_NAME);
+        let credit_id = command.long_value_of_parameter_named(CREDIT_ACCOUNT_ID_PARAM_NAME)?;
         if credit_type.is_some() {
-            base.reset()
+            validator
+                .reset()
                 .parameter(CREDIT_ACCOUNT_ID_PARAM_NAME)
                 .value(credit_id)
                 .not_null();
-        } else {
-            base.reset()
-                .parameter(CREDIT_ACCOUNT_ID_PARAM_NAME)
-                .value(credit_id)
-                .must_be_blank_when_parameter_provided_is(
-                    CREDIT_ACCOUNT_TYPE_PARAM_NAME,
-                    credit_type,
-                );
         }
 
-        DataValidatorBuilder::throw_if_errors(errors)
+        validator.throw_validation_errors().map_err(FineractError::from)
     }
 
     /// Validates an `UPDATE TAXCOMPONENT` command.
     pub fn validate_for_tax_component_update(command: &JsonCommand) -> Result<(), FineractError> {
         use tax_api_constants::*;
-        let mut errors = Vec::new();
-        let mut base = DataValidatorBuilder::new(&mut errors).resource("tax.component");
+        let validator = DataValidatorBuilder::for_resource("tax.component");
 
         if command.parameter_exists(NAME_PARAM_NAME) {
-            base.reset()
+            validator
+                .reset()
                 .parameter(NAME_PARAM_NAME)
                 .value(command.string_value_of_parameter_named(NAME_PARAM_NAME))
                 .not_blank();
         }
 
         if command.parameter_exists(PERCENTAGE_PARAM_NAME) {
-            let percentage = command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME);
-            base.reset()
+            let percentage = command.big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)?;
+            validator
+                .reset()
                 .parameter(PERCENTAGE_PARAM_NAME)
                 .value(percentage)
                 .not_null()
@@ -838,90 +834,94 @@ impl TaxValidator {
         }
 
         if command.parameter_exists(START_DATE_PARAM_NAME) {
-            base.reset()
+            let start_date = command.local_date_value_of_parameter_named(START_DATE_PARAM_NAME)?;
+            validator
+                .reset()
                 .parameter(START_DATE_PARAM_NAME)
-                .value(command.local_date_value_of_parameter_named(START_DATE_PARAM_NAME))
+                .value(start_date)
                 .not_null();
         }
 
-        DataValidatorBuilder::throw_if_errors(errors)
+        validator.throw_validation_errors().map_err(FineractError::from)
     }
 
     /// Validates a `CREATE TAXGROUP` command.
     pub fn validate_for_tax_group_create(command: &JsonCommand) -> Result<(), FineractError> {
         use tax_api_constants::*;
-        let mut errors = Vec::new();
-        let mut base = DataValidatorBuilder::new(&mut errors).resource("tax.group");
+        let validator = DataValidatorBuilder::for_resource("tax.group");
 
-        base.reset()
+        validator
+            .reset()
             .parameter(NAME_PARAM_NAME)
             .value(command.string_value_of_parameter_named(NAME_PARAM_NAME))
             .not_blank();
 
-        let components = command.array_of_parameter_named(TAX_COMPONENTS_PARAM_NAME);
-        base.reset()
-            .parameter(TAX_COMPONENTS_PARAM_NAME)
-            .value(components)
-            .not_null();
+        let parsed = command.parsed_json();
+        let components = parsed.get(TAX_COMPONENTS_PARAM_NAME).and_then(|v| v.as_array());
 
         if let Some(arr) = components {
             if arr.is_empty() {
-                base.reset()
+                validator
+                    .reset()
                     .parameter(TAX_COMPONENTS_PARAM_NAME)
                     .fail_with_code("cannot.be.empty", "Tax components array cannot be empty");
             }
             for item in arr {
                 let comp_id = item.get(TAX_COMPONENT_ID_PARAM_NAME).and_then(|v| v.as_i64());
-                base.reset()
-                    .parameter(&format!(
-                        "{TAX_COMPONENTS_PARAM_NAME}.{TAX_COMPONENT_ID_PARAM_NAME}"
-                    ))
+                validator
+                    .reset()
+                    .parameter("taxComponents.taxComponentId")
                     .value(comp_id)
                     .not_null()
                     .long_greater_than_zero();
             }
+        } else {
+            validator
+                .reset()
+                .parameter(TAX_COMPONENTS_PARAM_NAME)
+                .null_value()
+                .not_null();
         }
 
-        DataValidatorBuilder::throw_if_errors(errors)
+        validator.throw_validation_errors().map_err(FineractError::from)
     }
 
     /// Validates an `UPDATE TAXGROUP` command.
     pub fn validate_for_tax_group_update(command: &JsonCommand) -> Result<(), FineractError> {
         use tax_api_constants::*;
-        let mut errors = Vec::new();
-        let mut base = DataValidatorBuilder::new(&mut errors).resource("tax.group");
+        let validator = DataValidatorBuilder::for_resource("tax.group");
 
         if command.parameter_exists(NAME_PARAM_NAME) {
-            base.reset()
+            validator
+                .reset()
                 .parameter(NAME_PARAM_NAME)
                 .value(command.string_value_of_parameter_named(NAME_PARAM_NAME))
                 .not_blank();
         }
 
-        if command.parameter_exists(TAX_COMPONENTS_PARAM_NAME) {
-            if let Some(arr) = command.array_of_parameter_named(TAX_COMPONENTS_PARAM_NAME) {
-                for item in arr {
-                    let mapping_id = item.get(ID_PARAM_NAME).and_then(|v| v.as_i64());
-                    let comp_id = item.get(TAX_COMPONENT_ID_PARAM_NAME).and_then(|v| v.as_i64());
-                    if mapping_id.is_none() {
-                        base.reset()
-                            .parameter(&format!(
-                                "{TAX_COMPONENTS_PARAM_NAME}.{TAX_COMPONENT_ID_PARAM_NAME}"
-                            ))
-                            .value(comp_id)
-                            .not_null()
-                            .long_greater_than_zero();
-                    } else {
-                        base.reset()
-                            .parameter(&format!("{TAX_COMPONENTS_PARAM_NAME}.{ID_PARAM_NAME}"))
-                            .value(mapping_id)
-                            .long_greater_than_zero();
-                    }
+        let parsed = command.parsed_json();
+        if let Some(arr) = parsed.get(TAX_COMPONENTS_PARAM_NAME).and_then(|v| v.as_array()) {
+            for item in arr {
+                let mapping_id = item.get(ID_PARAM_NAME).and_then(|v| v.as_i64());
+                let comp_id = item.get(TAX_COMPONENT_ID_PARAM_NAME).and_then(|v| v.as_i64());
+                if mapping_id.is_none() {
+                    validator
+                        .reset()
+                        .parameter("taxComponents.taxComponentId")
+                        .value(comp_id)
+                        .not_null()
+                        .long_greater_than_zero();
+                } else {
+                    validator
+                        .reset()
+                        .parameter("taxComponents.id")
+                        .value(mapping_id)
+                        .long_greater_than_zero();
                 }
             }
         }
 
-        DataValidatorBuilder::throw_if_errors(errors)
+        validator.throw_validation_errors().map_err(FineractError::from)
     }
 }
 
@@ -1005,7 +1005,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for inserting into `m_tax_component`.
     pub fn insert_tax_component_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "INSERT INTO m_tax_component (id, name, percentage, debit_account_type_enum, debit_account_id, credit_account_type_enum, credit_account_id, start_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+            "INSERT INTO m_tax_component (id, name, percentage, debit_account_type_enum, debit_account_id, credit_account_type_enum, credit_account_id, start_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             self.dialect,
         )
     }
@@ -1013,7 +1013,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for updating `m_tax_component`.
     pub fn update_tax_component_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "UPDATE m_tax_component SET name = $1, percentage = $2, start_date = $3, lastmodifiedby_id = $4, lastmodified_date = $5 WHERE id = $6",
+            "UPDATE m_tax_component SET name = ?, percentage = ?, start_date = ?, lastmodifiedby_id = ?, lastmodified_date = ? WHERE id = ?",
             self.dialect,
         )
     }
@@ -1021,7 +1021,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for inserting into `m_tax_component_history`.
     pub fn insert_tax_component_history_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "INSERT INTO m_tax_component_history (id, tax_component_id, percentage, start_date, end_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO m_tax_component_history (id, tax_component_id, percentage, start_date, end_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             self.dialect,
         )
     }
@@ -1029,7 +1029,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for selecting a `TaxComponent` by ID.
     pub fn select_tax_component_by_id_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "SELECT id, name, percentage, debit_account_type_enum, debit_account_id, credit_account_type_enum, credit_account_id, start_date FROM m_tax_component WHERE id = $1",
+            "SELECT id, name, percentage, debit_account_type_enum, debit_account_id, credit_account_type_enum, credit_account_id, start_date FROM m_tax_component WHERE id = ?",
             self.dialect,
         )
     }
@@ -1037,7 +1037,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for selecting `TaxComponentHistory` rows for a component.
     pub fn select_tax_component_history_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "SELECT id, percentage, start_date, end_date FROM m_tax_component_history WHERE tax_component_id = $1 ORDER BY start_date ASC, id ASC",
+            "SELECT id, percentage, start_date, end_date FROM m_tax_component_history WHERE tax_component_id = ? ORDER BY start_date ASC, id ASC",
             self.dialect,
         )
     }
@@ -1045,7 +1045,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for inserting into `m_tax_group`.
     pub fn insert_tax_group_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "INSERT INTO m_tax_group (id, name, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO m_tax_group (id, name, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES (?, ?, ?, ?, ?, ?)",
             self.dialect,
         )
     }
@@ -1053,7 +1053,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for updating `m_tax_group`.
     pub fn update_tax_group_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "UPDATE m_tax_group SET name = $1, lastmodifiedby_id = $2, lastmodified_date = $3 WHERE id = $4",
+            "UPDATE m_tax_group SET name = ?, lastmodifiedby_id = ?, lastmodified_date = ? WHERE id = ?",
             self.dialect,
         )
     }
@@ -1061,7 +1061,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for inserting into `m_tax_group_mappings`.
     pub fn insert_tax_group_mapping_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "INSERT INTO m_tax_group_mappings (id, tax_group_id, tax_component_id, start_date, end_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "INSERT INTO m_tax_group_mappings (id, tax_group_id, tax_component_id, start_date, end_date, createdby_id, created_date, lastmodifiedby_id, lastmodified_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             self.dialect,
         )
     }
@@ -1069,7 +1069,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for updating `m_tax_group_mappings`.
     pub fn update_tax_group_mapping_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "UPDATE m_tax_group_mappings SET end_date = $1, lastmodifiedby_id = $2, lastmodified_date = $3 WHERE id = $4 AND tax_group_id = $5",
+            "UPDATE m_tax_group_mappings SET end_date = ?, lastmodifiedby_id = ?, lastmodified_date = ? WHERE id = ? AND tax_group_id = ?",
             self.dialect,
         )
     }
@@ -1077,7 +1077,7 @@ impl DualDbTaxRepository {
     /// Returns the dialect-adjusted SQL for selecting a `TaxGroup` by ID.
     pub fn select_tax_group_by_id_sql(&self) -> String {
         DialectSql::rewrite_placeholders(
-            "SELECT id, name FROM m_tax_group WHERE id = $1",
+            "SELECT id, name FROM m_tax_group WHERE id = ?",
             self.dialect,
         )
     }
@@ -1193,7 +1193,7 @@ impl DualDbTaxRepository {
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| FineractError::Internal(format!("DB query error: {e}")))?
+            .map_err(|e| FineractError::DatabaseError(format!("DB query error: {e}")))?
             .ok_or_else(|| {
                 FineractError::not_found(
                     "error.msg.tax.component.id.invalid",
@@ -1206,7 +1206,7 @@ impl DualDbTaxRepository {
             .bind(id)
             .fetch_all(pool)
             .await
-            .map_err(|e| FineractError::Internal(format!("DB history query error: {e}")))?;
+            .map_err(|e| FineractError::DatabaseError(format!("DB history query error: {e}")))?;
 
         let mut history = Vec::with_capacity(hist_rows.len());
         for h_row in hist_rows {
@@ -1280,6 +1280,7 @@ impl CreateTaxComponentCommandHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for CreateTaxComponentCommandHandler {
     fn action_name(&self) -> &'static str {
         "CREATE"
@@ -1289,7 +1290,7 @@ impl CommandHandler for CreateTaxComponentCommandHandler {
         "TAXCOMPONENT"
     }
 
-    fn handle(
+    async fn handle(
         &self,
         ctx: &ExecutionContext,
         command: &JsonCommand,
@@ -1303,19 +1304,19 @@ impl CommandHandler for CreateTaxComponentCommandHandler {
             .trim()
             .to_string();
         let percentage = command
-            .big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)
+            .big_decimal_value_of_parameter_named(PERCENTAGE_PARAM_NAME)?
             .unwrap_or(Decimal::ZERO);
         let debit_account_type = command
-            .integer_value_of_parameter_named(DEBIT_ACCOUNT_TYPE_PARAM_NAME)
+            .integer_value_of_parameter_named(DEBIT_ACCOUNT_TYPE_PARAM_NAME)?
             .map(|v| v as i16);
-        let debit_account_id = command.long_value_of_parameter_named(DEBIT_ACCOUNT_ID_PARAM_NAME);
+        let debit_account_id = command.long_value_of_parameter_named(DEBIT_ACCOUNT_ID_PARAM_NAME)?;
         let credit_account_type = command
-            .integer_value_of_parameter_named(CREDIT_ACCOUNT_TYPE_PARAM_NAME)
+            .integer_value_of_parameter_named(CREDIT_ACCOUNT_TYPE_PARAM_NAME)?
             .map(|v| v as i16);
-        let credit_account_id = command.long_value_of_parameter_named(CREDIT_ACCOUNT_ID_PARAM_NAME);
+        let credit_account_id = command.long_value_of_parameter_named(CREDIT_ACCOUNT_ID_PARAM_NAME)?;
         let start_date = command
-            .local_date_value_of_parameter_named(START_DATE_PARAM_NAME)
-            .unwrap_or(ctx.business_date);
+            .local_date_value_of_parameter_named(START_DATE_PARAM_NAME)?
+            .unwrap_or_else(|| ctx.business_date());
 
         let component = TaxComponent::new(
             0,
@@ -1331,7 +1332,7 @@ impl CommandHandler for CreateTaxComponentCommandHandler {
         let saved = self.repo.save_tax_component(component)?;
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_command_id(command.command_id())
+            .with_command_id_opt(command.command_id())
             .with_entity_id(saved.id)
             .build())
     }
@@ -1349,6 +1350,7 @@ impl UpdateTaxComponentCommandHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for UpdateTaxComponentCommandHandler {
     fn action_name(&self) -> &'static str {
         "UPDATE"
@@ -1358,7 +1360,7 @@ impl CommandHandler for UpdateTaxComponentCommandHandler {
         "TAXCOMPONENT"
     }
 
-    fn handle(
+    async fn handle(
         &self,
         _ctx: &ExecutionContext,
         command: &JsonCommand,
@@ -1378,7 +1380,7 @@ impl CommandHandler for UpdateTaxComponentCommandHandler {
         let saved = self.repo.save_tax_component(component)?;
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_command_id(command.command_id())
+            .with_command_id_opt(command.command_id())
             .with_entity_id(saved.id)
             .with_changes(changes)
             .build())
@@ -1397,6 +1399,7 @@ impl CreateTaxGroupCommandHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for CreateTaxGroupCommandHandler {
     fn action_name(&self) -> &'static str {
         "CREATE"
@@ -1406,7 +1409,7 @@ impl CommandHandler for CreateTaxGroupCommandHandler {
         "TAXGROUP"
     }
 
-    fn handle(
+    async fn handle(
         &self,
         ctx: &ExecutionContext,
         command: &JsonCommand,
@@ -1421,7 +1424,9 @@ impl CommandHandler for CreateTaxGroupCommandHandler {
             .to_string();
 
         let arr = command
-            .array_of_parameter_named(TAX_COMPONENTS_PARAM_NAME)
+            .parsed_json()
+            .get(TAX_COMPONENTS_PARAM_NAME)
+            .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
 
@@ -1437,11 +1442,11 @@ impl CommandHandler for CreateTaxGroupCommandHandler {
                     )
                 })?;
             let tax_component = self.repo.find_tax_component_by_id(comp_id)?;
-            let start_date = parse_date_from_value(item, START_DATE_PARAM_NAME, ctx.business_date);
+            let start_date = parse_date_from_value(item, START_DATE_PARAM_NAME, ctx.business_date());
             let end_date = item
                 .get(END_DATE_PARAM_NAME)
                 .filter(|v| !v.is_null())
-                .map(|_| parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date));
+                .map(|_| parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date()));
             let mapping_id = self.repo.allocate_mapping_id();
             mappings.push(TaxGroupMapping::new(
                 mapping_id,
@@ -1455,7 +1460,7 @@ impl CommandHandler for CreateTaxGroupCommandHandler {
         let saved = self.repo.save_tax_group(group)?;
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_command_id(command.command_id())
+            .with_command_id_opt(command.command_id())
             .with_entity_id(saved.id)
             .build())
     }
@@ -1473,6 +1478,7 @@ impl UpdateTaxGroupCommandHandler {
     }
 }
 
+#[async_trait]
 impl CommandHandler for UpdateTaxGroupCommandHandler {
     fn action_name(&self) -> &'static str {
         "UPDATE"
@@ -1482,7 +1488,7 @@ impl CommandHandler for UpdateTaxGroupCommandHandler {
         "TAXGROUP"
     }
 
-    fn handle(
+    async fn handle(
         &self,
         ctx: &ExecutionContext,
         command: &JsonCommand,
@@ -1509,7 +1515,9 @@ impl CommandHandler for UpdateTaxGroupCommandHandler {
         }
 
         if let Some(arr) = command
-            .array_of_parameter_named(TAX_COMPONENTS_PARAM_NAME)
+            .parsed_json()
+            .get(TAX_COMPONENTS_PARAM_NAME)
+            .and_then(|v| v.as_array())
             .cloned()
         {
             let mut modified_mappings = Vec::new();
@@ -1522,7 +1530,7 @@ impl CommandHandler for UpdateTaxGroupCommandHandler {
                         .is_some()
                     {
                         let new_end =
-                            parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date);
+                            parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date());
                         if mapping.end_date != Some(new_end) {
                             mapping.end_date = Some(new_end);
                             modified_mappings.push(json!({
@@ -1543,12 +1551,12 @@ impl CommandHandler for UpdateTaxGroupCommandHandler {
                         })?;
                     let tax_component = self.repo.find_tax_component_by_id(comp_id)?;
                     let start_date =
-                        parse_date_from_value(item, START_DATE_PARAM_NAME, ctx.business_date);
+                        parse_date_from_value(item, START_DATE_PARAM_NAME, ctx.business_date());
                     let end_date = item
                         .get(END_DATE_PARAM_NAME)
                         .filter(|v| !v.is_null())
                         .map(|_| {
-                            parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date)
+                            parse_date_from_value(item, END_DATE_PARAM_NAME, ctx.business_date())
                         });
                     let mapping_id = self.repo.allocate_mapping_id();
                     group.mappings.push(TaxGroupMapping::new(
@@ -1576,7 +1584,7 @@ impl CommandHandler for UpdateTaxGroupCommandHandler {
         let saved = self.repo.save_tax_group(group)?;
 
         Ok(CommandProcessingResultBuilder::new()
-            .with_command_id(command.command_id())
+            .with_command_id_opt(command.command_id())
             .with_entity_id(saved.id)
             .with_changes(changes)
             .build())
@@ -1647,10 +1655,9 @@ mod tests {
 
         // Step 1: Update percentage to 7% with startDate 2024-03-01
         let cmd1 = JsonCommand::from_raw(
-            None,
             r#"{"percentage": 7.0, "startDate": "2024-03-01", "dateFormat": "yyyy-MM-dd", "locale": "en"}"#,
-        )
-        .unwrap();
+            None,
+        );
         let changes1 = comp.apply_update(&cmd1, 10).unwrap();
         assert!(changes1.contains_key("percentage"));
         assert_eq!(comp.history.len(), 1);
@@ -1660,10 +1667,9 @@ mod tests {
 
         // Step 2: Move startDate to 2024-04-01 without changing percentage
         let cmd2 = JsonCommand::from_raw(
-            None,
             r#"{"startDate": "2024-04-01", "dateFormat": "yyyy-MM-dd", "locale": "en"}"#,
-        )
-        .unwrap();
+            None,
+        );
         comp.apply_update(&cmd2, 11).unwrap();
         assert_eq!(comp.start_date, d(2024, 4, 1));
         assert_eq!(comp.history[0].end_date, Some(d(2024, 4, 1)));
@@ -1835,41 +1841,38 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_command_handlers_and_dual_db_repository() {
+    #[tokio::test]
+    async fn test_command_handlers_and_dual_db_repository() {
         let repo = Arc::new(DualDbTaxRepository::new_in_memory());
         let create_comp_handler = CreateTaxComponentCommandHandler::new(repo.clone());
         let update_comp_handler = UpdateTaxComponentCommandHandler::new(repo.clone());
         let create_group_handler = CreateTaxGroupCommandHandler::new(repo.clone());
         let update_group_handler = UpdateTaxGroupCommandHandler::new(repo.clone());
 
-        let ctx = ExecutionContext::new("default", 1, d(2025, 1, 1));
+        let ctx = ExecutionContext::new("default", d(2025, 1, 1));
 
         // 1. Create Tax Component 1 (60%)
         let cmd_c1 = JsonCommand::from_raw(
+            r#"{"name": "Comp 1", "percentage": 60.0, "creditAccountType": 2, "creditAccountId": 501, "startDate": "2025-01-01", "dateFormat": "yyyy-MM-dd", "locale": "en"}"#,
             Some(1),
-            r#"{"name": "Comp 1", "percentage": 60.0, "creditAccountType": 2, "creditAccountId": 501, "startDate": "2025-01-01"}"#,
-        )
-        .unwrap();
-        let res_c1 = create_comp_handler.handle(&ctx, &cmd_c1).unwrap();
+        );
+        let res_c1 = create_comp_handler.handle(&ctx, &cmd_c1).await.unwrap();
         assert_eq!(res_c1.resource_id, Some(1));
 
         // 2. Create Tax Component 2 (50%)
         let cmd_c2 = JsonCommand::from_raw(
+            r#"{"name": "Comp 2", "percentage": 50.0, "creditAccountType": 2, "creditAccountId": 502, "startDate": "2025-01-01", "dateFormat": "yyyy-MM-dd", "locale": "en"}"#,
             Some(2),
-            r#"{"name": "Comp 2", "percentage": 50.0, "creditAccountType": 2, "creditAccountId": 502, "startDate": "2025-01-01"}"#,
-        )
-        .unwrap();
-        let res_c2 = create_comp_handler.handle(&ctx, &cmd_c2).unwrap();
+        );
+        let res_c2 = create_comp_handler.handle(&ctx, &cmd_c2).await.unwrap();
         assert_eq!(res_c2.resource_id, Some(2));
 
         // 3. Attempt to create a Tax Group with Comp 1 (60%) + Comp 2 (50%) = 110% -> must fail with >100% error
         let cmd_bad_group = JsonCommand::from_raw(
-            Some(3),
             r#"{"name": "Over 100 Group", "taxComponents": [{"taxComponentId": 1, "startDate": "2025-01-01"}, {"taxComponentId": 2, "startDate": "2025-01-01"}]}"#,
-        )
-        .unwrap();
-        let group_err = create_group_handler.handle(&ctx, &cmd_bad_group).unwrap_err();
+            Some(3),
+        );
+        let group_err = create_group_handler.handle(&ctx, &cmd_bad_group).await.unwrap_err();
         assert!(
             group_err
                 .to_string()
@@ -1878,30 +1881,29 @@ mod tests {
 
         // 4. Update Comp 1 to 10% starting 2025-02-01
         let cmd_u1 = JsonCommand::from_raw(
+            r#"{"percentage": 10.0, "startDate": "2025-02-01", "dateFormat": "yyyy-MM-dd", "locale": "en"}"#,
             Some(4),
-            r#"{"percentage": 10.0, "startDate": "2025-02-01"}"#,
         )
-        .unwrap()
         .with_entity_id(1);
-        update_comp_handler.handle(&ctx, &cmd_u1).unwrap();
+        update_comp_handler.handle(&ctx, &cmd_u1).await.unwrap();
 
         // 5. Create valid Tax Group with Comp 1 starting 2025-02-01 (10%) and Comp 2 starting 2025-02-01 (50%) = 60%
         let cmd_good_group = JsonCommand::from_raw(
-            Some(5),
             r#"{"name": "Valid Group", "taxComponents": [{"taxComponentId": 1, "startDate": "2025-02-01"}, {"taxComponentId": 2, "startDate": "2025-02-01"}]}"#,
-        )
-        .unwrap();
-        let res_group = create_group_handler.handle(&ctx, &cmd_good_group).unwrap();
+            Some(5),
+        );
+        let res_group = create_group_handler.handle(&ctx, &cmd_good_group).await.unwrap();
         let group_id = res_group.resource_id.unwrap();
+        let initial_group = repo.find_tax_group_by_id(group_id).unwrap();
+        let first_mapping_id = initial_group.mappings[0].id;
 
         // 6. Update Tax Group name and mapping endDate
-        let cmd_update_group = JsonCommand::from_raw(
-            Some(6),
-            r#"{"name": "Updated Group", "taxComponents": [{"id": 1, "endDate": "2025-12-31"}]}"#,
-        )
-        .unwrap()
-        .with_entity_id(group_id);
-        let res_ug = update_group_handler.handle(&ctx, &cmd_update_group).unwrap();
+        let update_payload = format!(
+            r#"{{"name": "Updated Group", "taxComponents": [{{"id": {}, "endDate": "2025-12-31"}}]}}"#,
+            first_mapping_id
+        );
+        let cmd_update_group = JsonCommand::from_raw(update_payload, Some(6)).with_entity_id(group_id);
+        let res_ug = update_group_handler.handle(&ctx, &cmd_update_group).await.unwrap();
         assert_eq!(res_ug.resource_id, Some(group_id));
 
         let saved_group = repo.find_tax_group_by_id(group_id).unwrap();

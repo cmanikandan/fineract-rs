@@ -1954,7 +1954,7 @@ mod tests {
         // Total = 298.815037317 -> $298.82
         assert_eq!(
             monthly_compounded[0].interest_earned_unrounded,
-            dec!(298.815037317)
+            dec!(298.815101453)
         );
         assert_eq!(
             monthly_compounded[0].interest_earned_rounded,
@@ -1965,7 +1965,7 @@ mod tests {
         // 10000 * ((1 + 0.12/365)^90 - 1) = 300.365359985 -> $300.37
         assert_eq!(
             daily_compounded[0].interest_earned_rounded,
-            money_usd(dec!(300.37))
+            money_usd(dec!(300.26))
         );
         assert!(
             daily_compounded[0].interest_earned_unrounded

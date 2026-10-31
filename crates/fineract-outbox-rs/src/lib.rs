@@ -28,6 +28,8 @@ pub enum ExternalEventStatus {
     Sent,
 }
 
+pub type OutboxEventStatus = ExternalEventStatus;
+
 impl ExternalEventStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -100,7 +102,7 @@ impl AvroOutboxSerializer {
         source: &str,
     ) -> AvroMessageV1Envelope {
         AvroMessageV1Envelope {
-            id: record.id as i32,
+            id: record.id as i64,
             source: source.to_string(),
             r#type: record.event_type.clone(),
             category: record.category.clone(),
@@ -353,5 +355,109 @@ mod tests {
         // Purge sent events
         let purged = worker.purge_sent_events(Utc::now() + chrono::Duration::seconds(1));
         assert_eq!(purged, 1);
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct OutboxEventRepository {
+    events: DashMap<i64, ExternalEventRecord>,
+    next_id: AtomicI64,
+}
+
+impl OutboxEventRepository {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn total_count(&self) -> usize {
+        self.events.len()
+    }
+    pub fn enqueue_event(
+        &self,
+        _tenant_id: &str,
+        event_type: &str,
+        category: &str,
+        aggregate_root_id: i64,
+        business_date: NaiveDate,
+        data: Vec<u8>,
+    ) -> i64 {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let record = ExternalEventRecord {
+            id,
+            event_type: event_type.to_string(),
+            schema_name: format!("{}.avsc", event_type),
+            data,
+            created_at: Utc::now(),
+            status: ExternalEventStatus::ToBeSent,
+            sent_at: None,
+            business_date,
+            idempotency_key: Uuid::new_v4(),
+            aggregate_root_id: Some(aggregate_root_id),
+            category: category.to_string(),
+        };
+        self.events.insert(id, record);
+        id
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ExternalEventConfigurationService {
+    configs: DashMap<String, bool>,
+}
+
+impl ExternalEventConfigurationService {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn list_configurations(&self) -> Vec<ExternalEventConfiguration> {
+        let mut res = Vec::new();
+        let mut id = 1;
+        for entry in self.configs.iter() {
+            res.push(ExternalEventConfiguration {
+                id,
+                event_type: entry.key().clone(),
+                enabled: *entry.value(),
+            });
+            id += 1;
+        }
+        res
+    }
+    pub fn set_enabled(&self, event_type: &str, enabled: bool) {
+        self.configs.insert(event_type.to_string(), enabled);
+    }
+}
+
+#[derive(Debug)]
+pub struct OutboxRelayDispatcher {
+    pub repo: Arc<OutboxEventRepository>,
+    pub config: Arc<ExternalEventConfigurationService>,
+    pub batch_size: usize,
+}
+
+impl OutboxRelayDispatcher {
+    pub fn new(
+        repo: Arc<OutboxEventRepository>,
+        config: Arc<ExternalEventConfigurationService>,
+        batch_size: usize,
+    ) -> Self {
+        Self { repo, config, batch_size }
+    }
+
+    pub fn relay_next_batch<F>(&self, mut callback: F) -> Result<usize, FineractError>
+    where
+        F: FnMut(&ExternalEventRecord) -> Result<(), FineractError>,
+    {
+        let mut sent = 0;
+        for mut entry in self.repo.events.iter_mut() {
+            if entry.value().status == ExternalEventStatus::ToBeSent {
+                callback(entry.value())?;
+                entry.value_mut().status = ExternalEventStatus::Sent;
+                entry.value_mut().sent_at = Some(Utc::now());
+                sent += 1;
+                if sent >= self.batch_size {
+                    break;
+                }
+            }
+        }
+        Ok(sent)
     }
 }

@@ -22,36 +22,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::RwLock;
 
-use fineract_accounting_rs::{AccountingCommandExecutor, JournalEntryCommand};
-use fineract_batch_api_rs::{BatchApiService, BatchRequestItem, BatchResponseItem};
-use fineract_branch_rs::{OfficeData, StaffData};
-use fineract_charge_rs::ChargeData;
-use fineract_client_portfolio_rs::{ClientData, GroupData};
-use fineract_cob_rs::{CobExecutionSummary, LoanCobOrchestrator};
-use fineract_collateral_rs::CollateralManagementData;
-use fineract_command_rs::{CommandProcessingResult, CommandSourceService, CommandWrapperBuilder};
-use fineract_core_rs::{
-    AppUserPrincipal, BusinessDateType, DatabaseDialect, FineractError, FineractPlatformContext,
-    FineractTenant, IdempotencyKey, TenantDatabasePoolRegistry,
-};
-use fineract_document_rs::{CodeData, DataTableMetadata};
-use fineract_interop_rs::{InteropIdentifierType, InteropPartyRequest, InteropQuoteRequest, InteropTransferRequest};
-use fineract_investor_rs::ExternalAssetOwnerTransferData;
-use fineract_loan_origination_rs::LoanOriginatorData;
+use std::collections::BTreeMap;
+
+use fineract_batch_api_rs::{BatchApiService, BatchRequest, BatchResponse};
+use fineract_command_rs::pipeline::CommandProcessingResult;
+use fineract_core_rs::context::{ActionContext, BusinessDateType, ExecutionContext, FineractPlatformTenant};
+use fineract_core_rs::db::TenantPoolRegistry;
 use fineract_loan_provider_rs::{
     LoanAccountRepository, LoanCommandDispatcher, LoanProductRepository, LoanReadPlatformService,
 };
-use fineract_loan_rs::{LoanAccount, LoanProduct};
-use fineract_ops_rs::{BusinessDateService, GlobalConfigurationPropertyData, SchedulerJobDetail};
-use fineract_organisation_rs::{HolidayData, TelleringService, WorkingDaysData};
 use fineract_outbox_rs::{ExternalEventConfigurationService, OutboxEventRepository, OutboxRelayDispatcher};
-use fineract_rates_rs::{CurrencyData, FloatingRateData};
 use fineract_reporting_rs::{ReadReportingService, RunReportRequest};
-use fineract_savings_rs::{SavingsAccount, SavingsCommandDispatcher, SavingsProduct};
-use fineract_security_rs::{AuthenticationProvider, SecurityConfig, TenantAuthHeaderExtractor};
-use fineract_shares_rs::{ShareAccountData, ShareProductData};
-use fineract_tax_rs::{TaxComponentData, TaxGroupData};
-use fineract_working_capital_loan_rs::WorkingCapitalLoanAccount;
+use fineract_validation_rs::FineractError;
+
+#[derive(Debug, Clone, Default)]
+pub struct SecurityConfig {
+    pub enabled: bool,
+}
 
 /// Runtime mode for the Fineract server instance (mirrors Fineract Read/Write/Batch instance modes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,7 +119,7 @@ impl Default for FineractServerConfig {
 pub struct FineractAppState {
     pub config: FineractServerConfig,
     pub started_at: Instant,
-    pub pool_registry: Arc<TenantDatabasePoolRegistry>,
+    pub pool_registry: Arc<TenantPoolRegistry>,
     pub security_config: SecurityConfig,
     pub batch_service: Arc<BatchApiService>,
     pub reporting_service: Arc<ReadReportingService>,
@@ -181,7 +168,7 @@ impl FineractAppState {
         Self {
             config,
             started_at: Instant::now(),
-            pool_registry: Arc::new(TenantDatabasePoolRegistry::new()),
+            pool_registry: Arc::new(TenantPoolRegistry::new()),
             security_config: SecurityConfig::default(),
             batch_service: Arc::new(BatchApiService::default()),
             reporting_service: Arc::new(ReadReportingService::new()),
@@ -197,12 +184,12 @@ impl FineractAppState {
         }
     }
 
-    /// Resolves the `FineractPlatformContext` from incoming request headers (`Fineract-Platform-TenantId`,
+    /// Resolves the `ExecutionContext` from incoming request headers (`Fineract-Platform-TenantId`,
     /// `Idempotency-Key`, `Authorization`).
     pub async fn resolve_context(
         &self,
         headers: &HeaderMap,
-    ) -> Result<FineractPlatformContext, FineractError> {
+    ) -> Result<ExecutionContext, FineractError> {
         let tenant_id = headers
             .get(&self.config.tenant_header_name)
             .or_else(|| headers.get("fineract-platform-tenantid"))
@@ -212,9 +199,7 @@ impl FineractAppState {
             .to_string();
 
         if tenant_id.is_empty() {
-            return Err(FineractError::Unauthenticated(
-                "Missing Fineract-Platform-TenantId header".to_string(),
-            ));
+            return Err(FineractError::Unauthenticated);
         }
 
         let dates = self.business_dates.read().await;
@@ -232,37 +217,21 @@ impl FineractAppState {
         business_dates.insert(BusinessDateType::BusinessDate, biz_date);
         business_dates.insert(BusinessDateType::CobDate, cob_date);
 
-        let idempotency_key = headers
-            .get(&self.config.idempotency_header_name)
-            .or_else(|| headers.get("idempotency-key"))
-            .or_else(|| headers.get("x-idempotency-key"))
-            .and_then(|v| v.to_str().ok())
-            .map(|s| IdempotencyKey(s.to_string()));
-
-        let tenant = FineractTenant {
+        let tenant = FineractPlatformTenant {
             id: 1,
-            identifier: tenant_id.clone(),
+            tenant_identifier: tenant_id.clone(),
             name: format!("Tenant {}", tenant_id),
             timezone_id: "UTC".to_string(),
-            dialect: DatabaseDialect::Postgres,
+            connection: None,
         };
 
-        let user = AppUserPrincipal {
-            user_id: 1,
-            username: "mifos".to_string(),
-            office_id: 1,
-            office_hierarchy: ".".to_string(),
-            staff_id: Some(1),
-            roles: vec!["Super user".to_string()],
-            permissions: vec!["ALL_FUNCTIONS".to_string()],
-        };
-
-        Ok(FineractPlatformContext {
+        Ok(ExecutionContext {
+            tenant_id: tenant_id.clone(),
             tenant,
-            user,
             business_dates,
-            idempotency_key,
-            correlation_id: uuid::Uuid::new_v4(),
+            action_context: ActionContext::Default,
+            authenticated_user_id: Some(1),
+            is_super_user: true,
         })
     }
 }
@@ -337,7 +306,7 @@ pub fn build_fineract_router(state: FineractAppState) -> Router {
         .route("/savingsproducts", get(handle_list_savings_products).post(handle_create_savings_product))
         .route("/savingsaccounts", get(handle_list_savings_accounts).post(handle_create_savings_account))
         .route("/savingsaccounts/:account_id", get(handle_get_savings_account).post(handle_savings_command))
-        .route("/ savingsaccounts/:account_id/transactions", post(handle_savings_transaction))
+        .route("/savingsaccounts/:account_id/transactions", get(handle_savings_transaction).post(handle_savings_transaction))
         // Loans, Loan Products, Progressive Schedule, Delinquency (Wave 4)
         .route("/loanproducts", get(handle_list_loan_products).post(handle_create_loan_product))
         .route("/loanproducts/:product_id", get(handle_get_loan_product))
@@ -366,11 +335,15 @@ pub fn build_fineract_router(state: FineractAppState) -> Router {
         .route("/instance-mode", get(handle_get_instance_mode));
 
     Router::new()
+        .route("/health", get(handle_actuator_health))
+        .route("/info", get(handle_actuator_info))
         .route("/actuator/health", get(handle_actuator_health))
         .route("/actuator/info", get(handle_actuator_info))
         .route("/fineract-provider/actuator/health", get(handle_actuator_health))
         .route("/fineract-provider/actuator/info", get(handle_actuator_info))
+        .route("/api-docs/openapi.json", get(handle_openapi_spec))
         .route("/fineract-provider/v3/api-docs", get(handle_openapi_spec))
+        .route("/interop/health", get(handle_interop_health))
         .nest("/fineract-provider/api/v1", api_v1.clone())
         .nest("/api/v1", api_v1)
         .layer(middleware::from_fn_with_state(
@@ -390,7 +363,7 @@ async fn fineract_instance_mode_guard(
     let path = req.uri().path().to_string();
 
     // Always allow actuator and openapi endpoints
-    if !path.contains("/actuator/") && !path.ends_with("/api-docs") && !path.ends_with("/instance-mode") {
+    if !path.contains("/actuator/") && !path.ends_with("/api-docs") && !path.ends_with("/openapi.json") && !path.ends_with("/instance-mode") && path != "/health" && path != "/info" && path != "/interop/health" {
         let is_write = matches!(method, Method::POST | Method::PUT | Method::DELETE | Method::PATCH);
         if is_write && !state.config.instance_mode.can_write() {
             let body = Json(json!({
@@ -523,10 +496,10 @@ async fn handle_authentication(
     let username = payload.get("username").and_then(|v| v.as_str()).unwrap_or("mifos");
     Json(json!({
         "username": username,
-        "userId": ctx.user.user_id,
+        "userId": ctx.authenticated_user_id.unwrap_or(1),
         "base64EncodedAuthenticationKey": "bWlmb3M6cGFzc3dvcmQ=",
         "authenticated": true,
-        "officeId": ctx.user.office_id,
+        "officeId": 1,
         "officeName": "Head Office",
         "roles": [{ "id": 1, "name": "Super user", "description": "This role provides all application permissions." }],
         "permissions": ["ALL_FUNCTIONS"],
@@ -614,7 +587,7 @@ async fn handle_get_currencies() -> impl IntoResponse {
 
 async fn handle_update_currencies(Json(payload): Json<Value>) -> impl IntoResponse {
     let mut res = CommandProcessingResult::empty();
-    let mut changes = HashMap::new();
+    let mut changes = BTreeMap::new();
     if let Some(currencies) = payload.get("currencies") {
         changes.insert("currencies".to_string(), currencies.clone());
     }
@@ -818,7 +791,6 @@ async fn handle_savings_command(
 async fn handle_savings_transaction(
     Path(account_id): Path<i64>,
     Query(_params): Query<HashMap<String, String>>,
-    Json(_payload): Json<Value>,
 ) -> impl IntoResponse {
     let mut res = CommandProcessingResult::from_resource_id(1);
     res.savings_id = Some(account_id);
@@ -1068,10 +1040,10 @@ async fn handle_update_business_date(
         .unwrap_or_else(|_| ctx.business_date());
 
     let mut dates = state.business_dates.write().await;
-    dates.insert((ctx.tenant.identifier.clone(), date_type), parsed_date);
+    dates.insert((ctx.tenant.tenant_identifier.clone(), date_type), parsed_date);
 
     let mut res = CommandProcessingResult::empty();
-    let mut changes = HashMap::new();
+    let mut changes = BTreeMap::new();
     changes.insert(req.date_type, json!(parsed_date.to_string()));
     res.changes = Some(changes);
     Json(res).into_response()
@@ -1118,7 +1090,7 @@ async fn handle_update_external_events_config(
     State(state): State<FineractAppState>,
     Json(payload): Json<Value>,
 ) -> impl IntoResponse {
-    let mut changes = HashMap::new();
+    let mut changes = BTreeMap::new();
     if let Some(obj) = payload.get("externalEventConfigurations").and_then(|v| v.as_object()) {
         for (event_type, enabled_val) in obj {
             if let Some(enabled) = enabled_val.as_bool() {
@@ -1133,62 +1105,47 @@ async fn handle_update_external_events_config(
 }
 
 async fn handle_execute_batch(
-    Query(params): Query<HashMap<String, String>>,
-    State(state): State<FineractAppState>,
-    Json(requests): Json<Vec<BatchRequestItem>>,
+    Query(_params): Query<HashMap<String, String>>,
+    State(_state): State<FineractAppState>,
+    Json(requests): Json<Vec<BatchRequest>>,
 ) -> Response {
-    let enclosing_tx = params
-        .get("enclosingTransaction")
-        .and_then(|s| s.parse::<bool>().ok())
-        .unwrap_or(false);
-
-    let state_clone = state.clone();
-    let result = state.batch_service.execute_batch(requests, enclosing_tx, |req, _in_tx| {
-        // Dispatch common batch requests against our in-memory services
+    let mut responses = Vec::with_capacity(requests.len());
+    for req in requests {
         if req.relative_url.starts_with("clients") && req.method.eq_ignore_ascii_case("POST") {
             let client_id = req.request_id * 100 + 1;
-            let body = serde_json::to_string(&json!({
-                "officeId": 1,
-                "clientId": client_id,
-                "resourceId": client_id
-            }))
-            .unwrap();
-            Ok(BatchResponseItem {
+            responses.push(BatchResponse {
                 request_id: req.request_id,
                 status_code: 200,
                 headers: vec![],
-                body: Some(body),
-            })
+                body: Some(json!({
+                    "officeId": 1,
+                    "clientId": client_id,
+                    "resourceId": client_id
+                }).to_string()),
+            });
         } else if req.relative_url.starts_with("loans") && req.method.eq_ignore_ascii_case("POST") {
             let loan_id = req.request_id * 100 + 50;
-            let body = serde_json::to_string(&json!({
-                "officeId": 1,
-                "clientId": 1,
-                "loanId": loan_id,
-                "resourceId": loan_id
-            }))
-            .unwrap();
-            Ok(BatchResponseItem {
+            responses.push(BatchResponse {
                 request_id: req.request_id,
                 status_code: 200,
                 headers: vec![],
-                body: Some(body),
-            })
+                body: Some(json!({
+                    "officeId": 1,
+                    "clientId": 1,
+                    "loanId": loan_id,
+                    "resourceId": loan_id
+                }).to_string()),
+            });
         } else {
-            let _ = &state_clone;
-            Ok(BatchResponseItem {
+            responses.push(BatchResponse {
                 request_id: req.request_id,
                 status_code: 200,
                 headers: vec![],
                 body: Some(json!({ "resourceId": req.request_id }).to_string()),
-            })
+            });
         }
-    });
-
-    match result {
-        Ok(responses) => Json(responses).into_response(),
-        Err(e) => error_response(e),
     }
+    Json(responses).into_response()
 }
 
 async fn handle_list_reports(State(state): State<FineractAppState>) -> impl IntoResponse {

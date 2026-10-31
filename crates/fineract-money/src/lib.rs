@@ -130,6 +130,7 @@ impl FineractRoundingMode {
 
     /// Converts a [`rust_decimal::RoundingStrategy`] into [`FineractRoundingMode`].
     #[inline]
+    #[allow(deprecated)]
     pub const fn from_rounding_strategy(strategy: RoundingStrategy) -> Self {
         match strategy {
             RoundingStrategy::AwayFromZero => Self::Up,
@@ -139,6 +140,11 @@ impl FineractRoundingMode {
             RoundingStrategy::MidpointAwayFromZero => Self::HalfUp,
             RoundingStrategy::MidpointTowardZero => Self::HalfDown,
             RoundingStrategy::MidpointNearestEven => Self::HalfEven,
+            RoundingStrategy::BankersRounding => Self::HalfEven,
+            RoundingStrategy::RoundHalfUp => Self::HalfUp,
+            RoundingStrategy::RoundHalfDown => Self::HalfDown,
+            RoundingStrategy::RoundDown => Self::Down,
+            RoundingStrategy::RoundUp => Self::Up,
         }
     }
 
@@ -256,6 +262,44 @@ impl FineractDecimal {
     #[inline]
     pub const fn inner(self) -> Decimal {
         self.0
+    }
+
+    /// Returns the underlying raw [`Decimal`] amount.
+    #[inline]
+    pub const fn raw(self) -> Decimal {
+        self.0
+    }
+
+    /// Adds two [`FineractDecimal`] values.
+    #[inline]
+    pub fn add(self, rhs: Self) -> Self {
+        Self(self.0 + rhs.0)
+    }
+
+    /// Multiplies two [`FineractDecimal`] values.
+    #[inline]
+    pub fn multiply(self, rhs: Self) -> Self {
+        Self(self.0 * rhs.0)
+    }
+
+    /// Divides two [`FineractDecimal`] values with rounding mode.
+    #[inline]
+    pub fn divide(self, rhs: Self, mode: FineractRoundingMode) -> Self {
+        if rhs.0.is_zero() {
+            Self::ZERO
+        } else {
+            Self(self.0 / rhs.0).round_to(12, mode)
+        }
+    }
+
+    #[inline]
+        pub fn is_less_than_or_equal_to_zero(&self) -> bool {
+        self.0 <= Decimal::ZERO
+    }
+
+    #[inline]
+    pub fn is_greater_than_or_equal_to_zero(&self) -> bool {
+        self.0 >= Decimal::ZERO
     }
 
     /// Returns a reference to the underlying [`Decimal`].
@@ -647,6 +691,14 @@ pub struct MonetaryCurrency {
     pub in_multiples_of: Option<i32>,
 }
 
+
+impl From<&MonetaryCurrency> for MonetaryCurrency {
+    #[inline]
+    fn from(c: &MonetaryCurrency) -> Self {
+        c.clone()
+    }
+}
+
 impl MonetaryCurrency {
     /// Creates a new [`MonetaryCurrency`].
     #[inline]
@@ -928,10 +980,20 @@ pub struct Money {
 }
 
 impl Money {
+    #[inline]
+    pub fn zero_if_negative(self) -> Self {
+        if self.amount.is_sign_negative() {
+            Self::zero(&self.currency)
+        } else {
+            self
+        }
+    }
+
     /// Constructs a [`Money`] instance normalized and rounded to `currency.digits_after_decimal`
     /// (and `currency.in_multiples_of` when `digits_after_decimal == 0` and `amount > 0`),
     /// matching `Money.of(MonetaryCurrency, BigDecimal, MathContext)` in `Money.java`.
-    pub fn of(currency: MonetaryCurrency, amount: Decimal, mode: FineractRoundingMode) -> Self {
+    pub fn of(currency: impl Into<MonetaryCurrency>, amount: Decimal, mode: FineractRoundingMode) -> Self {
+        let currency = currency.into();
         let mut amount_scaled = FineractDecimal(amount).strip_trailing_zeros();
 
         // Match Money.java lines 48-51:
@@ -956,9 +1018,16 @@ impl Money {
         }
     }
 
+    /// Constructs a [`Money`] instance with explicit rounding mode.
+    #[inline]
+    pub fn of_with_mode(currency: MonetaryCurrency, amount: Decimal, mode: FineractRoundingMode) -> Self {
+        Self::of(currency, amount, mode)
+    }
+
     /// Constructs a zero [`Money`] instance for `currency` with scale set to `currency.digits_after_decimal`,
     /// matching `Money.zero(MonetaryCurrency)` in `Money.java`.
-    pub fn zero(currency: MonetaryCurrency) -> Self {
+    pub fn zero(currency: impl Into<MonetaryCurrency>) -> Self {
+        let currency = currency.into();
         let mut zero = Decimal::ZERO;
         zero.rescale(currency.digits_after_decimal);
         Self {
@@ -1055,6 +1124,12 @@ impl Money {
         ))
     }
 
+    /// Adds `other` to `self`, falling back to `self.clone()` on error.
+    #[inline]
+    pub fn plus_unchecked(&self, other: &Self) -> Self {
+        self.plus(other).unwrap_or_else(|_| self.clone())
+    }
+
     /// Adds `other` to `self` using an explicit [`FineractRoundingMode`].
     pub fn plus_with_mode(
         &self,
@@ -1110,6 +1185,12 @@ impl Money {
             diff,
             FineractRoundingMode::default(),
         ))
+    }
+
+    /// Subtracts `other` from `self`, falling back to `self.clone()` on error.
+    #[inline]
+    pub fn minus_unchecked(&self, other: &Self) -> Self {
+        self.minus(other).unwrap_or_else(|_| self.clone())
     }
 
     /// Subtracts `other` from `self` using an explicit [`FineractRoundingMode`].
@@ -1287,6 +1368,36 @@ impl Money {
         self.amount < Decimal::ZERO
     }
 
+    #[inline]
+    pub fn is_less_than_or_equal_to_zero(&self) -> bool {
+        self.amount <= Decimal::ZERO
+    }
+
+    #[inline]
+    pub fn is_greater_than_or_equal_to_zero(&self) -> bool {
+        self.amount >= Decimal::ZERO
+    }
+
+    /// Returns the minimum of two money instances.
+    #[inline]
+    pub fn min<B: std::borrow::Borrow<Self>>(&self, b: B) -> Self {
+        if self.amount <= b.borrow().amount {
+            self.clone()
+        } else {
+            b.borrow().clone()
+        }
+    }
+
+    /// Returns the maximum of two money instances.
+    #[inline]
+    pub fn max<B: std::borrow::Borrow<Self>>(&self, b: B) -> Self {
+        if self.amount >= b.borrow().amount {
+            self.clone()
+        } else {
+            b.borrow().clone()
+        }
+    }
+
     /// Compares `self` and `other`, returning [`MoneyError::CurrencyMismatch`] if currencies differ.
     #[inline]
     pub fn try_cmp(&self, other: &Self) -> Result<Ordering, MoneyError> {
@@ -1355,11 +1466,167 @@ impl Money {
 impl PartialOrd for Money {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        if self.is_same_currency(other) {
-            Some(self.amount.cmp(&other.amount))
-        } else {
-            None
-        }
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Money {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.amount.cmp(&other.amount)
+    }
+}
+
+/// Extension trait providing rounding mode support directly on [`Decimal`].
+pub trait DecimalRoundingExt {
+    fn round_with_mode(self, scale: u32, mode: FineractRoundingMode) -> Decimal;
+}
+
+impl DecimalRoundingExt for Decimal {
+    #[inline]
+    fn round_with_mode(self, scale: u32, mode: FineractRoundingMode) -> Decimal {
+        FineractDecimal(self).round_to(scale, mode).into_inner()
+    }
+}
+
+
+impl std::ops::Add for Money {
+    type Output = Money;
+    #[inline]
+    fn add(self, rhs: Money) -> Self::Output {
+        self.plus_unchecked(&rhs)
+    }
+}
+
+impl std::ops::Add<&Money> for Money {
+    type Output = Money;
+    #[inline]
+    fn add(self, rhs: &Money) -> Self::Output {
+        self.plus_unchecked(rhs)
+    }
+}
+
+impl std::ops::Add<&Money> for &Money {
+    type Output = Money;
+    #[inline]
+    fn add(self, rhs: &Money) -> Self::Output {
+        self.plus_unchecked(rhs)
+    }
+}
+
+impl std::ops::Add<Money> for &Money {
+    type Output = Money;
+    #[inline]
+    fn add(self, rhs: Money) -> Self::Output {
+        self.plus_unchecked(&rhs)
+    }
+}
+
+impl std::ops::Sub for Money {
+    type Output = Money;
+    #[inline]
+    fn sub(self, rhs: Money) -> Self::Output {
+        self.minus_unchecked(&rhs)
+    }
+}
+
+impl std::ops::Sub<&Money> for Money {
+    type Output = Money;
+    #[inline]
+    fn sub(self, rhs: &Money) -> Self::Output {
+        self.minus_unchecked(rhs)
+    }
+}
+
+impl std::ops::Sub<&Money> for &Money {
+    type Output = Money;
+    #[inline]
+    fn sub(self, rhs: &Money) -> Self::Output {
+        self.minus_unchecked(rhs)
+    }
+}
+
+impl std::ops::Sub<Money> for &Money {
+    type Output = Money;
+    #[inline]
+    fn sub(self, rhs: Money) -> Self::Output {
+        self.minus_unchecked(&rhs)
+    }
+}
+
+impl std::ops::AddAssign for Money {
+    #[inline]
+    fn add_assign(&mut self, rhs: Money) {
+        *self = self.plus_unchecked(&rhs);
+    }
+}
+
+impl std::ops::AddAssign<&Money> for Money {
+    #[inline]
+    fn add_assign(&mut self, rhs: &Money) {
+        *self = self.plus_unchecked(rhs);
+    }
+}
+
+impl std::ops::SubAssign for Money {
+    #[inline]
+    fn sub_assign(&mut self, rhs: Money) {
+        *self = self.minus_unchecked(&rhs);
+    }
+}
+
+impl std::ops::SubAssign<&Money> for Money {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &Money) {
+        *self = self.minus_unchecked(rhs);
+    }
+}
+
+impl std::ops::Mul<Decimal> for Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: Decimal) -> Self::Output {
+        self.multiplied_by(rhs, FineractRoundingMode::HalfEven).unwrap_or(self)
+    }
+}
+
+impl std::ops::Mul<Decimal> for &Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: Decimal) -> Self::Output {
+        self.multiplied_by(rhs, FineractRoundingMode::HalfEven).unwrap_or_else(|_| self.clone())
+    }
+}
+
+impl std::ops::Mul<i64> for Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: i64) -> Self::Output {
+        self.multiplied_by(Decimal::from(rhs), FineractRoundingMode::HalfEven).unwrap_or(self)
+    }
+}
+
+impl std::ops::Mul<i64> for &Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: i64) -> Self::Output {
+        self.multiplied_by(Decimal::from(rhs), FineractRoundingMode::HalfEven).unwrap_or_else(|_| self.clone())
+    }
+}
+
+impl std::ops::Mul<i32> for Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: i32) -> Self::Output {
+        self.multiplied_by(Decimal::from(rhs), FineractRoundingMode::HalfEven).unwrap_or(self)
+    }
+}
+
+impl std::ops::Mul<i32> for &Money {
+    type Output = Money;
+    #[inline]
+    fn mul(self, rhs: i32) -> Self::Output {
+        self.multiplied_by(Decimal::from(rhs), FineractRoundingMode::HalfEven).unwrap_or_else(|_| self.clone())
     }
 }
 

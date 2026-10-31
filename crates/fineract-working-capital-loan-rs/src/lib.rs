@@ -2225,7 +2225,8 @@ mod tests {
                 "commitmentFeeRate": "1.50",
                 "revolvingLine": true,
                 "maxDrawdowns": 5,
-                "amortizationType": "EQUAL_INSTALLMENTS"
+                "amortizationType": "EQUAL_INSTALLMENTS",
+                "locale": "en"
             }),
         );
         let prod_res = create_product_handler.handle(&ctx, &prod_cmd).await.unwrap();
@@ -2236,7 +2237,8 @@ mod tests {
             json!({
                 "productId": product_id,
                 "clientId": 77,
-                "sanctionedCreditLimit": "80000.00"
+                "sanctionedCreditLimit": "80000.00",
+                "locale": "en"
             }),
         );
         let submit_res = submit_loan_handler.handle(&ctx, &submit_cmd).await.unwrap();
